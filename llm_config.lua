@@ -1,0 +1,73 @@
+-- =========================================================
+-- 文件名：llm_config.lua
+-- 存放位置：~/.local/share/fcitx5/rime/
+-- =========================================================
+
+return {
+    -- ==========================================
+    -- 🎛️ 1. 核心大模型切换
+    -- ==========================================
+    active_profile = "gemini",
+
+    -- ==========================================
+    -- 🌐 2. LLM 后端配置库（不要外传API Key）
+    -- ==========================================
+    profiles = {
+        deepseek = {
+            name = "DeepSeek",
+            api_url = "https://api.deepseek.com/chat/completions",
+            api_key = "你的deepseek的api_key",
+            model = "deepseek-chat",
+        },
+        gemini = {
+            name = "Gemini",
+            api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            api_key = "你的Gemini的API key",
+            model = "gemini-3-flash-preview",
+        },
+        ollama = {
+            name = "Ollama",
+            api_url = "http://localhost:11434/v1/chat/completions",
+            api_key = "ollama",
+            model = "qwen2.5:7b",
+        },
+        lmstudio = {
+            name = "LMStudio",
+            api_url = "http://localhost:1234/v1/chat/completions",
+            api_key = "lm-studio",
+            model = "local-model",
+        },
+    },
+
+    -- ==========================================
+    --  3. 基础功能配置
+    -- ==========================================
+    ai_trigger = "vv",
+    
+    prompt = "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见输入内容。请将用户的拼音转化为流畅的句子。注意几点：1. 准确还原语境中的英文词汇。2. 高度重视【纯首字母简拼】（如mrfz=明日方舟）。3. 重视【前后鼻音】区分，用户可能发给你错误的前后鼻音，你要通过前后的拼音上下文正确做出判断。严格遵守：只输出纯净的最终句子（保留正常的中文标点），绝对不要输出解释、拼音或双引号！。",
+
+    -- ==========================================
+    -- ⚙️ 4. API 请求参数
+    -- ==========================================
+    max_tokens = 2000,
+    temperature = 0.1,
+    connect_timeout = 2.0, 
+    max_time = 30.0,
+
+    -- ==========================================
+    --  5. AI 输入法专属外挂词库
+    -- ==========================================
+    vocab_text = [[
+# -------- 常用英文/网络黑话 --------
+vibecoding
+rime
+bootloader
+wm
+de
+
+# -------- 首字母简拼/拼音缩写映射 --------
+mrfz=明日方舟
+yyds=永远的神
+
+    ]]
+}
