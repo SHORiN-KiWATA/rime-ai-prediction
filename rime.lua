@@ -1,147 +1,97 @@
 -- ==============================================================================
--- 功能：Rime LLM 长句转换器 (修复瞬间报错、增强 JSON 转义、透传底层错误)
+-- 功能：Rime LLM 长句转换器 
 -- ==============================================================================
 
-local LLM_Cache = { input = "", text = "", comment = "" }
-local config_file_path = os.getenv("HOME") .. "/.local/share/fcitx5/rime/llm_config.lua"
-
 local function load_config()
-    local f = io.open(config_file_path, "r")
-    if not f then return nil end
+    -- 智能获取路径，兼容各种 Linux 发行版的新老路径规范
+    local user_dir = rime_api and rime_api.get_user_data_dir and rime_api.get_user_data_dir()
+    if not user_dir or user_dir == "" then
+        user_dir = os.getenv("HOME") .. "/.local/share/fcitx5/rime"
+    end
+    local config_path = user_dir .. "/llm_config.lua"
+
+    local f = io.open(config_path, "r")
+    if not f then return nil, "找不到文件: " .. config_path end
     f:close()
 
-    local chunk = loadfile(config_file_path)
-    if chunk then
-        local success, user_config = pcall(chunk)
-        if success and type(user_config) == "table" then
-            return user_config
-        end
-    end
-    return nil
-end
-
-local function parse_vocab_string(vocab_text)
-    if not vocab_text or vocab_text == "" then return "" end
-    local valid_lines = {}
-    for line in string.gmatch(vocab_text, "[^\r\n]+") do
-        line = string.gsub(line, "^%s*(.-)%s*$", "%1")
-        if line ~= "" and string.sub(line, 1, 1) ~= "#" then
-            table.insert(valid_lines, line)
-        end
-    end
-    if #valid_lines == 0 then return "" end
-    return table.concat(valid_lines, ", ")
+    local chunk, err = loadfile(config_path)
+    if not chunk then return nil, "语法错误: " .. tostring(err) end
+    
+    local success, cfg = pcall(chunk)
+    if success and type(cfg) == "table" then return cfg, nil end
+    return nil, "格式错误"
 end
 
 function llm_translator(input, seg, env)
-    local Config = load_config()
-    if not Config then return end
-
-    if not string.match(input, "^[a-z][a-z.,?'!:%-]*$") then return end
-    local trigger_len = string.len(Config.ai_trigger)
-    if string.sub(input, -trigger_len) ~= Config.ai_trigger then return end
-
-    local send_text = string.sub(input, 1, - (trigger_len + 1))
-    if #send_text < 1 then return end
-
-    local active_key = Config.active_profile
-    local current_ai = Config.profiles and Config.profiles[active_key]
+    -- 1. 严格拦截：如果输入不是 vv 结尾，立刻放行，绝不卡顿
+    if not string.match(input, "vv$") then return end
     
+    -- 💡 2. 内部探针：只要你输入 testvv，强行弹出成功标志！(证明 YAML 和 Lua 挂载正常)
+    if input == "testvv" then
+        yield(Candidate("llm", seg.start, seg._end, "✅ 3文件版引擎连通成功!", "连通测试"))
+        return
+    end
+
+    local send_text = string.sub(input, 1, -3)
+    if #send_text == 0 then return end
+
+    -- 3. 读取配置
+    local Config, err_msg = load_config()
+    if not Config then
+        yield(Candidate("llm", seg.start, seg._end, send_text, "❌ 配置读取失败: " .. tostring(err_msg)))
+        return
+    end
+
+    local current_ai = Config.profiles and Config.profiles[Config.active_profile]
     if not current_ai then
-        yield(Candidate("llm_pinyin", seg.start, seg._end, send_text, "❌ 找不到配置: " .. tostring(active_key)))
+        yield(Candidate("llm", seg.start, seg._end, send_text, "❌ 找不到节点: " .. tostring(Config.active_profile)))
         return
     end
 
-    local ai_name = current_ai.name or "AI"
-    local api_url = current_ai.api_url
     local api_key = current_ai.api_key
-    local model_name = current_ai.model
-
-    if not api_key or api_key == "" or string.find(api_key, "你的真实") then
-        yield(Candidate("llm_pinyin", seg.start, seg._end, send_text, "❌ 请填写 " .. ai_name .. " 的 Key"))
+    if not api_key or api_key == "" then
+        yield(Candidate("llm", seg.start, seg._end, send_text, "❌ API Key 为空"))
         return
     end
 
-    if input == LLM_Cache.input then
-        yield(Candidate("llm_pinyin", seg.start, seg._end, LLM_Cache.text, LLM_Cache.comment))
-        return
-    end
-
-    -- ==========================================
-    -- 🚀 构造网络请求 (极度安全版)
-    -- ==========================================
-    local active_vocab = parse_vocab_string(Config.vocab_text)
-    local vocab_hint = ""
-    if active_vocab ~= "" then vocab_hint = "。以下是你可以参考的用户自定词库：" .. active_vocab end
-
-    local prompt_system = Config.prompt .. vocab_hint
+    -- 4. 构建请求 (去除了高危的 Pkill 系统调用，防止沙盒拦截)
+    local safe_prompt = string.gsub(Config.prompt or "", '"', '\\"')
+    local safe_text = string.gsub(send_text, '"', '\\"')
     
-    -- 💡 修复 1：将系统提示词也进行 JSON 安全转义
-    local safe_prompt_system = string.gsub(prompt_system, "\\", "\\\\")
-    safe_prompt_system = string.gsub(safe_prompt_system, '"', '\\"')
-
-    local safe_user_content = string.gsub(send_text, "\\", "\\\\")
-    safe_user_content = string.gsub(safe_user_content, '"', '\\"')
-
     local json_data = string.format(
         '{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}],"temperature":%s,"max_tokens":%s}',
-        model_name, safe_prompt_system, safe_user_content, Config.temperature, Config.max_tokens
+        current_ai.model, safe_prompt, safe_text, Config.temperature or 0.1, Config.max_tokens or 1000
     )
+    local safe_json = string.gsub(json_data, "'", "'\\''")
     
-    local safe_json_data = string.gsub(json_data, "'", "'\\''")
-    
-    -- 💡 修复 2：将 safe_json_data 改用字符串拼接 (..) 注入，彻底杜绝输入带 % 号引发的 Lua string.format 崩溃
     local curl_cmd = string.format(
-        "curl -sS --connect-timeout %s --max-time %s -X POST %s -H 'Content-Type: application/json' -H 'Authorization: Bearer %s' -d ",
-        Config.connect_timeout, Config.max_time, api_url, api_key
-    ) .. "'" .. safe_json_data .. "' 2>&1"
-
-    os.execute('pkill -f "curl.*chat/completions" 2>/dev/null')
+        "curl -sS --connect-timeout %s --max-time %s -X POST %s -H 'Content-Type: application/json' -H 'Authorization: Bearer %s' -d '%s' 2>&1",
+        Config.connect_timeout or 2, Config.max_time or 15, current_ai.api_url, api_key, safe_json
+    )
 
     local handle = io.popen(curl_cmd)
-    if not handle then return end
+    if not handle then
+        yield(Candidate("llm", seg.start, seg._end, send_text, "❌ 网络组件 io.popen 崩溃"))
+        return
+    end
     local response = handle:read("*a")
     handle:close()
 
-    -- ==========================================
-    -- 🛠️ 结果解析与动态名称透传
-    -- ==========================================
+    -- 5. 解析并输出
     if not response or response == "" then
-        local err_label = "⏳ " .. ai_name .. " 超时"
-        LLM_Cache = { input = input, text = send_text, comment = err_label }
-        yield(Candidate("llm_pinyin", seg.start, seg._end, send_text, err_label))
+        yield(Candidate("llm", seg.start, seg._end, send_text, "⏳ 请求超时无响应"))
         return
     end
 
-    -- 💡 修复 3：将大模型返回的转义双引号提前干掉，防止 Lua 正则匹配被半路截断
-    local safe_response = string.gsub(response, '\\"', '”')
-    local raw_content = string.match(safe_response, '"content":%s*"([^"]+)"')
-
-    if raw_content and raw_content ~= "" then
-        local clean_result = string.gsub(raw_content, "\\n", "")
-        clean_result = string.gsub(clean_result, "<think>.-</think>", "")
-        clean_result = string.gsub(clean_result, "[\r\n\t]", "") 
-        clean_result = string.gsub(clean_result, "^%s*(.-)%s*$", "%1")
-
-        if clean_result ~= "" then
-            local success_label = "✨ " .. ai_name
-            LLM_Cache = { input = input, text = clean_result, comment = success_label }
-            yield(Candidate("llm_pinyin", seg.start, seg._end, clean_result, success_label))
-        end
+    local raw_content = string.match(response, '"content":%s*"([^"]+)"')
+    if raw_content then
+        local clean = string.gsub(raw_content, "\\n", "")
+        clean = string.gsub(clean, "<think>.-</think>", "")
+        clean = string.gsub(clean, "^%s*(.-)%s*$", "%1")
+        yield(Candidate("llm", seg.start, seg._end, clean, "✨ " .. (current_ai.name or "AI")))
     else
-        -- 💡 修复 4：透传真实报错！不要只显示冷冰冰的 "错误"
-        local err_msg = string.match(response, '"message":%s*"([^"]+)"')
-        if err_msg then
-            local short_err = string.sub(err_msg, 1, 50) -- 增加截取长度，方便你排错
-            local err_label = "⚠️ " .. ai_name .. ": " .. short_err
-            LLM_Cache = { input = input, text = send_text, comment = err_label }
-            yield(Candidate("llm_pinyin", seg.start, seg._end, send_text, err_label))
-        else
-            local short_err = string.sub(response, 1, 50)
-            short_err = string.gsub(short_err, "[\r\n]", " ")
-            local err_label = "❌ " .. ai_name .. " 错误: " .. short_err
-            LLM_Cache = { input = input, text = send_text, comment = err_label }
-            yield(Candidate("llm_pinyin", seg.start, seg._end, send_text, err_label))
-        end
+        local short_err = string.sub(response, 1, 40)
+        short_err = string.gsub(short_err, "[\r\n]", " ")
+        yield(Candidate("llm", seg.start, seg._end, send_text, "❌ " .. short_err))
     end
 end
