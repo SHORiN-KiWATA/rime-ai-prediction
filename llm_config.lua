@@ -31,6 +31,12 @@ return {
             api_key = "【你的apikey】",
             model = "mimo-v2-omni",
         },
+        openrouter = {
+            name = "OpenRouter",
+            api_url = "https://openrouter.ai/api/v1/chat/completions",
+            api_key = "【你的apikey】",
+            model = "minimax-m2.7",
+        },
         ollama = {
             name = "Ollama",
             api_url = "http://192.168.0.13:11434/v1/chat/completions",
