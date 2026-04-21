@@ -31,6 +31,12 @@ return {
             api_key = "【你的apikey】",
             model = "mimo-v2-omni",
         },
+        minimax = {
+            name = "Minimax",
+            api_url = "https://api.minimaxi.com/v1/chat/completions",
+            api_key = "【你的apikey】",
+            model = "MiniMax-M2.7",
+        },
         openrouter = {
             name = "OpenRouter",
             api_url = "https://openrouter.ai/api/v1/chat/completions",

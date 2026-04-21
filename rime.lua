@@ -65,7 +65,7 @@ function llm_translator(input, seg, env)
     local safe_json = string.gsub(json_data, "'", "'\\''")
     
     local curl_cmd = string.format(
-        "curl -sS --connect-timeout %s --max-time %s -X POST %s -H 'Content-Type: application/json' -H 'Authorization: Bearer %s' -d '%s' 2>&1",
+        "curl -sSL --connect-timeout %s --max-time %s -X POST %s -H 'Content-Type: application/json' -H 'Authorization: Bearer %s' -d '%s' 2>&1",
         Config.connect_timeout or 2, Config.max_time or 15, current_ai.api_url, api_key, safe_json
     )
 
@@ -77,21 +77,32 @@ function llm_translator(input, seg, env)
     local response = handle:read("*a")
     handle:close()
 
-    -- 5. 解析并输出
+-- 5. 解析并输出
     if not response or response == "" then
         yield(Candidate("llm", seg.start, seg._end, send_text, "⏳ 请求超时无响应"))
         return
     end
 
-    local raw_content = string.match(response, '"content":%s*"([^"]+)"')
+    -- 🟢 核心修复1：先把 JSON 里的转义双引号 \" 替换为占位符，防止正则提前被截断
+    local safe_response = string.gsub(response, '\\"', '__QUOTE__')
+    
+    local raw_content = string.match(safe_response, '"content":%s*"([^"]+)"')
     if raw_content then
+        -- 把占位符还原回双引号
+        raw_content = string.gsub(raw_content, "__QUOTE__", '"')
+        
         local clean = string.gsub(raw_content, "\\n", "")
+        
+        -- 🟢 核心修复2：过滤完整的思考过程
         clean = string.gsub(clean, "<think>.-</think>", "")
+        -- 🟢 核心修复3：如果模型没想完就被限制了字数，导致丢失了 </think>，也要强行清理掉
+        clean = string.gsub(clean, "<think>.*", "")
+        
         clean = string.gsub(clean, "^%s*(.-)%s*$", "%1")
         yield(Candidate("llm", seg.start, seg._end, clean, "✨ " .. (current_ai.name or "AI")))
     else
         local short_err = string.sub(response, 1, 40)
         short_err = string.gsub(short_err, "[\r\n]", " ")
-        yield(Candidate("llm", seg.start, seg._end, send_text, "❌ " .. short_err))
+        yield(Candidate("llm", seg.start, seg._end, send_text, "❌ 解析失败: " .. short_err))
     end
 end
