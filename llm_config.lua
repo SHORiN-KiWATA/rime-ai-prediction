@@ -70,7 +70,7 @@ return {
     max_tokens = 4000,
     temperature = 0.1,
     connect_timeout = 2.0, 
-    max_time = 10.0,
+    max_time = 30.0,
 
     -- ==========================================
     -- 📚 5. AI 输入法专属外挂词库
