@@ -91,6 +91,7 @@ I18N = {
         "tui_st_tokens": "Max Tokens",
         "tui_st_temp": "Temperature",
         "tui_st_time": "Reply Timeout",
+        "tui_st_thinking": "Thinking Mode",
         
         # TUI Vocab
         "tui_vc_title": " Custom Vocab ",
@@ -120,8 +121,10 @@ I18N = {
         "tui_btn_ok": " [Enter] OK ",
         "tui_hint_menu": "[Enter]Select [q]Back",
         "tui_hint_menu_del": "[Enter]Edit  [d]Del  [u]Undo  [q]Back",
+        "tui_hint_search": " [/]Search",
+        "tui_menu_no_match": "No matches found.",
         "tui_hint_form_nav": "[j/k] Nav [h/l] Buttons [i/Enter] Edit [q] Cancel ",
-        "tui_hint_form_edit": " [←/→] Move Cursor  [Enter/Esc] Done Editing ",
+        "tui_hint_form_edit": " [←/→] Move Cursor  [Enter/Esc] Done ",
         "tui_hint_textarea": "[ESC/TAB] Save & Exit  [Enter] Newline ",
         "tui_placeholder_ta": "(Multi-line, press Enter/i to edit)",
         
@@ -203,6 +206,7 @@ I18N = {
         "tui_st_tokens": "最大输出词元 (Tokens)",
         "tui_st_temp": "发散度 (Temperature)",
         "tui_st_time": "回复超时 (Max Time)",
+        "tui_st_thinking": "思考模式 (Thinking)",
         
         # TUI Vocab
         "tui_vc_title": " 自定义词库 ",
@@ -232,6 +236,8 @@ I18N = {
         "tui_btn_ok": " [回车] 确定 ",
         "tui_hint_menu": "[Enter]选择 [q]返回",
         "tui_hint_menu_del": "[Enter]编辑  [d]删除  [u]撤销  [q]返回",
+        "tui_hint_search": " [/]搜索",
+        "tui_menu_no_match": "无匹配项",
         "tui_hint_form_nav": " [j/k]上下选择 [h/l]切换按钮 [i/Enter]编辑 [q]取消 ",
         "tui_hint_form_edit": " [←/→]移动光标  [Enter/Esc]完成编辑 ",
         "tui_hint_textarea": "[ESC/TAB] 保存并返回  [Enter] 文本换行 ",
@@ -292,7 +298,8 @@ def get_default_state():
         "settings": {
             "prompt": "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见输入内容。你的职责是把用户的拼音转化为流畅、通顺、合理的句子。你要识别出拼音中的错输、乱序等问题，通过切分用户的拼音推理出正确的句子。注意几点：1. 准确还原语境中的英文词汇。2. 高度重视【纯首字母简拼】（如mrfz=明日方舟）。3. 重视【前后鼻音】区分，用户可能发给你错误的前后鼻音，你要通过前后的拼音上下文做出正确的判断。严格遵守：绝对不要输出解释、思考内容、拼音或双引号！【特殊情况】如果用户发来由：“这是命令”或者“call:”之类的内容开头的内容，说明后面是对你的指令，而不是需要翻译的拼音。",
             "ai_trigger": "v", "max_tokens": 4000, "temperature": 0.1,
-            "connect_timeout": 2.0, "max_time": 30.0
+            "connect_timeout": 2.0, "max_time": 30.0,
+            "thinking_mode": "关闭 (Disabled)"
         },
         "vocab": {"terms":["vibecoding", "rime", "bootloader", "wm", "de"], "mappings": {"yyds": "永远的神", "mrfz": "明日方舟", "srwc": "是人我吃", "yihuan": "异环"}}
     }
@@ -349,6 +356,7 @@ return {{
     temperature = {settings.get('temperature', 0.1)},
     connect_timeout = {settings.get('connect_timeout', 2.0)}, 
     max_time = {settings.get('max_time', 30.0)},
+    thinking_mode = "{settings.get('thinking_mode', '')}",
     vocab_text = [[{vocab_str}    ]]
 }}
 """
@@ -417,10 +425,9 @@ def init_rime_config():
         print(f"{L_WARN} " + t("cli_init_mkdir", rime_dir))
         os.makedirs(rime_dir, exist_ok=True)
     
-    # 检测并生成默认配置
     if not os.path.exists(STATE_FILE) or not os.path.exists(LUA_FILE):
         print(f"{L_INFO} " + t("cli_init_gen_config"))
-        state = load_state() # 若无文件则返回默认字典
+        state = load_state() 
         save_state(state)
         export_to_lua(state)
         print(f"{L_OK} " + t("cli_init_ok_config", CONFIG_DIR))
@@ -615,48 +622,85 @@ def textarea_dialog(stdscr, title, text):
         elif code in (10, 13): chars.insert(cursor, '\n'); cursor += 1
         elif char.isprintable(): chars.insert(cursor, char); cursor += 1
 
-def menu_dialog(stdscr, title, options, default_idx=0, hint=None, allow_delete=False, allow_undo=False):
+def menu_dialog(stdscr, title, options, default_idx=0, hint=None, allow_delete=False, allow_undo=False, allow_search=False):
     if hint is None: hint = t('tui_hint_menu')
+    if allow_search: hint += t('tui_hint_search')
     stdscr.timeout(-1)
     sh, sw = stdscr.getmaxyx()
+    
     h = min(sh - 4, len(options) + 4)
+    h = max(h, 6)
     w = min(sw - 4, max(40, max((str_width(o[0]) for o in options), default=0) + 10))
     y, x = (sh - h) // 2, (sw - w) // 2
     
     sel = default_idx
+    filter_str = ""
+    filter_mode = False
+    
     while True:
         stdscr.erase()
         draw_box(stdscr, y, x, h, w, title)
-        _safe_addstr(stdscr, y + h - 1, x + 2, f" {hint} ", curses.color_pair(C_TITLE))
+        
+        if filter_str:
+            filtered_opts = [o for o in options if filter_str.lower() in o[0].lower()]
+        else:
+            filtered_opts = options
+            
+        sel = max(0, min(sel, max(0, len(filtered_opts) - 1)))
+        
+        current_hint = t('tui_sm_srch', filter_str) if filter_mode else f" {hint} "
+        _safe_addstr(stdscr, y + h - 1, x + 2, current_hint, curses.color_pair(C_TITLE) | (curses.A_BOLD if filter_mode else 0))
         
         list_h = h - 2
-        start_idx = max(0, min(sel - list_h // 2, len(options) - list_h))
+        start_idx = max(0, min(sel - list_h // 2, len(filtered_opts) - list_h))
         
-        for i in range(list_h):
-            idx = start_idx + i
-            if idx >= len(options): break
-            text = options[idx][0]
-            
-            disp_w, vis_str = 0, ""
-            for ch in text:
-                cw = str_width(ch)
-                if disp_w + cw > w - 4: break
-                vis_str += ch; disp_w += cw
+        if not filtered_opts:
+            _safe_addstr(stdscr, y + 1, x + 2, pad_str(t('tui_menu_no_match'), w - 4), curses.color_pair(C_MAIN))
+        else:
+            for i in range(list_h):
+                idx = start_idx + i
+                if idx >= len(filtered_opts): break
+                text = filtered_opts[idx][0]
                 
-            attr = curses.color_pair(C_HL) if idx == sel else curses.color_pair(C_MAIN)
-            _safe_addstr(stdscr, y + 1 + i, x + 2, pad_str(vis_str, w - 4), attr)
+                disp_w, vis_str = 0, ""
+                for ch in text:
+                    cw = str_width(ch)
+                    if disp_w + cw > w - 4: break
+                    vis_str += ch; disp_w += cw
+                    
+                attr = curses.color_pair(C_HL) if idx == sel else curses.color_pair(C_MAIN)
+                _safe_addstr(stdscr, y + 1 + i, x + 2, pad_str(vis_str, w - 4), attr)
             
         stdscr.refresh()
-        k = stdscr.getch()
-        code = k if isinstance(k, int) else ord(k)
+        try: k = stdscr.get_wch()
+        except curses.error: continue
+        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
         
+        if filter_mode:
+            if code in (27, curses.KEY_F3): 
+                filter_mode = False
+                filter_str = ""
+            elif code in (10, 13): 
+                filter_mode = False
+                if filtered_opts: 
+                    return ('SELECT', filtered_opts[sel][1]) if allow_delete else filtered_opts[sel][1]
+            elif code in (curses.KEY_BACKSPACE, 127, 8):
+                filter_str = filter_str[:-1]
+            elif char.isprintable():
+                filter_str += char
+            continue
+            
         if code in (27, ord('q'), ord('Q')): return ('QUIT', None) if allow_delete else None
         elif code in (curses.KEY_UP, ord('k')): sel = max(0, sel - 1)
-        elif code in (curses.KEY_DOWN, ord('j')): sel = min(len(options) - 1, sel + 1)
-        elif code == ord('d') and allow_delete and options[sel][1] != "NEW": return ('DELETE', options[sel][1])
+        elif code in (curses.KEY_DOWN, ord('j')): sel = min(len(filtered_opts) - 1, sel + 1)
+        elif code == ord('/') and allow_search: 
+            filter_mode = True
+            filter_str = "" 
+        elif code == ord('d') and allow_delete and filtered_opts and filtered_opts[sel][1] != "NEW": return ('DELETE', filtered_opts[sel][1])
         elif code == ord('u') and allow_undo: return ('UNDO', None)
         elif code in (10, 13):
-            return ('SELECT', options[sel][1]) if allow_delete else options[sel][1]
+            if not filtered_opts: continue
+            return ('SELECT', filtered_opts[sel][1]) if allow_delete else filtered_opts[sel][1]
 
 def form_dialog(stdscr, title, fields, show_delete=False):
     stdscr.timeout(-1)
@@ -672,7 +716,8 @@ def form_dialog(stdscr, title, fields, show_delete=False):
     btn_del_idx = len(fields) + 2 if show_delete else -1
     max_sel = len(fields) + (2 if show_delete else 1)
     
-    cursors, scrolls =[len(str(f["value"])) for f in fields],[0 for _ in fields]
+    cursors = [len(str(f["value"])) if f.get("type") != "select" else 0 for f in fields]
+    scrolls = [0 for _ in fields]
 
     while True:
         stdscr.erase()
@@ -692,6 +737,12 @@ def form_dialog(stdscr, title, fields, show_delete=False):
             
             if f.get("type") == "textarea":
                 vis = t('tui_placeholder_ta') if sel == i else truncate_str(val.replace('\n', ' '), field_w)
+                _safe_addstr(stdscr, fy, fx, pad_str(vis, field_w), attr)
+                continue
+                
+            # 渲染 Select 控件 (带有下三角提示)
+            if f.get("type") == "select":
+                vis = f" {val} ▾" if sel == i else f" {val}"
                 _safe_addstr(stdscr, fy, fx, pad_str(vis, field_w), attr)
                 continue
 
@@ -738,11 +789,21 @@ def form_dialog(stdscr, title, fields, show_delete=False):
                 if sel == btn_cancel_idx: return None
                 elif sel == btn_save_idx: return [str(f["value"]) for f in fields]
                 elif sel == btn_del_idx: return "DELETE"
-                elif sel < len(fields) and fields[sel].get("type") == "textarea":
-                    fields[sel]["value"] = textarea_dialog(stdscr, fields[sel]["label"], fields[sel]["value"])
-                    cursors[sel] = len(fields[sel]["value"])
                 elif sel < len(fields):
-                    mode = "EDIT"
+                    # 拦截 Select 控件，直接打开菜单
+                    if fields[sel].get("type") == "select":
+                        f_sel = fields[sel]
+                        opts = [(o, o) for o in f_sel["options"]]
+                        try: def_idx = f_sel["options"].index(f_sel["value"])
+                        except: def_idx = 0
+                        choice = menu_dialog(stdscr, f_sel["label"], opts, default_idx=def_idx)
+                        if choice and choice != 'QUIT':
+                            f_sel["value"] = choice
+                    elif fields[sel].get("type") == "textarea":
+                        fields[sel]["value"] = textarea_dialog(stdscr, fields[sel]["label"], fields[sel]["value"])
+                        cursors[sel] = len(fields[sel]["value"])
+                    else:
+                        mode = "EDIT"
             elif code == 9: sel = (sel + 1) % (max_sel + 1)
             elif code in (curses.KEY_DOWN, ord('j')): sel = min(max_sel, sel + 1)
             elif code in (curses.KEY_UP, ord('k')): sel = max(0, sel - 1)
@@ -787,35 +848,28 @@ def normalize_api_url(url):
 
     url_lower = url.lower()
 
-    # 1. 针对 Anthropic (Claude)
     if "anthropic" in url_lower or "claude" in url_lower:
         if url_lower.endswith("/models"):
-            url = url[:-7] # 去除 /models
+            url = url[:-7] 
         if not url_lower.endswith("/messages"):
             if url_lower.endswith("/v1"): return url + "/messages"
             return url + "/v1/messages"
         return url
 
-    # 2. 针对 Ollama (默认端口 11434)
     if "11434" in url_lower:
-        # 如果用户错填了获取模型的接口
         if url_lower.endswith("/api/tags"): url = url[:-9]
         elif url_lower.endswith("/v1/models"): url = url[:-10]
         elif url_lower.endswith("/models"): url = url[:-7]
         
-        # 补全为兼容 OpenAI 格式的 endpoint
         if not url_lower.endswith("/chat/completions"):
             if url_lower.endswith("/v1"): return url + "/chat/completions"
-            elif url_lower.endswith("/api"): return url + "/chat" # Ollama 原生接口
-            else: return url + "/v1/chat/completions" # 默认推断为 v1 兼容接口
+            elif url_lower.endswith("/api"): return url + "/chat"
+            else: return url + "/v1/chat/completions"
         return url
 
-    # 3. 针对 Google Gemini
     if "generativelanguage" in url_lower:
-        # Gemini 的 URL 结构比较特殊，通常包含 model_name，尽量保持原样或做简单清理
         return url
 
-    # 4. 针对标准 OpenAI 及其兼容代理 (SiliconFlow, DeepSeek, 各种中转)
     if not url_lower.endswith("/chat/completions"):
         if url_lower.endswith("/models"):
             url = url[:-7]
@@ -938,7 +992,9 @@ class ProviderEditorTUI:
 
         if self.filter_mode:
             if code in (27, curses.KEY_F3):
-                self.filter_mode = False; self._rebuild_tree()
+                self.filter_mode = False
+                self.filter_str = "" 
+                self._rebuild_tree()
                 return True
             elif code in (10, 13): 
                 self.filter_mode = False
@@ -954,7 +1010,6 @@ class ProviderEditorTUI:
         if code == curses.KEY_LEFT or char.lower() == 'h':
             if self.active_col == 2: self.active_col = 1 if self.show_org else 0
             elif self.active_col == 1: self.active_col = 0
-            if self.filter_str: self.filter_str = ""; self._rebuild_tree()
         elif code == curses.KEY_RIGHT or char.lower() == 'l':
             if self.active_col == 0: self.active_col = 1 if self.show_org and self.org_list else (2 if not self.show_org and self.model_list else 0)
             elif self.active_col == 1 and self.model_list: self.active_col = 2
@@ -966,7 +1021,10 @@ class ProviderEditorTUI:
             if self.active_col == 0 and self.prov_idx > 0: self.prov_idx -= 1; self._trigger_fetch()
             elif self.active_col == 1 and self.org_idx > 0: self.org_idx -= 1; self._update_model_list()
             elif self.active_col == 2 and self.model_idx > 0: self.model_idx -= 1
-        elif char == '/': self.filter_mode = True
+        elif char == '/': 
+            self.filter_mode = True
+            self.filter_str = "" 
+            self._rebuild_tree()
         elif char.lower() == 'r': self._trigger_fetch()
         elif char.lower() == 'a':
             res = form_dialog(self.stdscr, t('tui_sm_add_prov'),[{"label": t('tui_sm_lbl_id'),"value":""}, {"label":t('tui_sm_lbl_name'),"value":""}, {"label":t('tui_sm_lbl_url'),"value":""}, {"label":t('tui_sm_lbl_key'),"value":""}])
@@ -983,7 +1041,6 @@ class ProviderEditorTUI:
                 self.state["profiles"][pid] = {"name": res[1], "api_url": norm_url, "api_key": res[3], "model": ""}
                 save_state(self.state)
                 self._sync_from_state()
-                # 重新定位到刚新建的配置项
                 for i, prov in enumerate(self.providers):
                     if prov["id"] == pid: self.prov_idx = i; break
                 self._trigger_fetch()
@@ -1010,7 +1067,6 @@ class ProviderEditorTUI:
                         self.status_msg, self.status_flash = t('tui_sm_err_id_exist'), 30
                         return True
                         
-                    # 如果更改了ID，我们需要更新字典的键，并确保 active_profile 不会失效
                     if new_id != p["id"]:
                         self.state["profiles"][new_id] = self.state["profiles"].pop(p["id"])
                         if self.state.get("active_profile") == p["id"]:
@@ -1020,7 +1076,6 @@ class ProviderEditorTUI:
                     self.state["profiles"][new_id].update({"name": res[1], "api_url": norm_url, "api_key": res[3]})
                     save_state(self.state)
                     self._sync_from_state()
-                    # 修改后可能因为排序导致顺序变动，重新定位
                     for i, prov in enumerate(self.providers):
                         if prov["id"] == new_id: self.prov_idx = i; break
                     self._trigger_fetch()
@@ -1150,7 +1205,7 @@ def run_app(stdscr):
                 msgbox(stdscr, t('msg_info'), t('tui_sw_err'))
                 continue
             
-            res = menu_dialog(stdscr, t('tui_sw_title'), valid_opts)
+            res = menu_dialog(stdscr, t('tui_sw_title'), valid_opts, allow_search=True)
             if res and res != 'QUIT': state["active_profile"] = res; save_state(state)
                 
         elif choice == "edit_profiles":
@@ -1158,18 +1213,52 @@ def run_app(stdscr):
 
         elif choice == "edit_settings":
             s = state["settings"]
-            res = form_dialog(stdscr, t('tui_st_title'),[
+            
+            # 智能检测当前配置是否支持“思考模式”
+            active_prof_id = state.get("active_profile", "")
+            active_prof = state["profiles"].get(active_prof_id, {})
+            url_lower = active_prof.get("api_url", "").lower()
+            model_lower = active_prof.get("model", "").lower()
+
+            # 对于 OpenRouter，由于其内部有严格的模型ID隔离机制（如 deepseek-chat 和 deepseek-r1 分别是不同模型），
+            # 强行通过参数注入可能会导致 400 错误，因此对包含 openrouter 的配置予以忽略。
+            is_openrouter = "openrouter" in url_lower
+            
+            is_deepseek = "deepseek" in url_lower or "deepseek" in model_lower
+            is_gemini = "generativelanguage" in url_lower or "gemini" in model_lower
+            is_anthropic = "anthropic" in url_lower or "claude" in model_lower
+            supports_thinking = (is_deepseek or is_gemini or is_anthropic) and not is_openrouter
+            
+            fields_config = [
                 {"label": t('tui_st_prompt'), "value": s.get("prompt", ""), "type": "textarea"},
                 {"label": t('tui_st_trigger'), "value": s.get("ai_trigger", "v")},
                 {"label": t('tui_st_tokens'), "value": str(s.get("max_tokens", 4000))},
                 {"label": t('tui_st_temp'), "value": str(s.get("temperature", 0.1))},
                 {"label": t('tui_st_time'), "value": str(s.get("max_time", 30.0))}
-            ])
+            ]
+            
+            if supports_thinking:
+                think_opts = ["Disabled", "Enabled (Low)", "Enabled (Medium)", "Enabled (High)"]
+                if LANG == "zh":
+                    think_opts = ["关闭 (Disabled)", "开启 - 低强度 (Low)", "开启 - 中强度 (Medium)", "开启 - 高强度 (High)"]
+                
+                fields_config.append({
+                    "label": t('tui_st_thinking'),
+                    "value": s.get("thinking_mode", think_opts[0]),
+                    "type": "select",
+                    "options": think_opts
+                })
+
+            res = form_dialog(stdscr, t('tui_st_title'), fields_config)
             if res:
                 s["prompt"], s["ai_trigger"] = res[0], res[1]
                 s["max_tokens"] = int(res[2]) if res[2].isdigit() else 4000
                 s["temperature"] = float(res[3]) if res[3].replace('.','',1).isdigit() else 0.1
                 s["max_time"] = float(res[4]) if res[4].replace('.','',1).isdigit() else 30.0
+                
+                if supports_thinking and len(res) > 5:
+                    s["thinking_mode"] = res[5]
+                
                 save_state(state)
 
         elif choice == "edit_vocab":
@@ -1180,7 +1269,7 @@ def run_app(stdscr):
                 if v_choice == "terms":
                     while True:
                         terms = state["vocab"].get("terms",[])
-                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_term_title'), [(t, t) for t in terms] +[(t('tui_vc_add_term'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True) or (None, None)
+                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_term_title'), [(t, t) for t in terms] +[(t('tui_vc_add_term'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True, allow_search=True) or (None, None)
                         if sel_action in (None, 'QUIT'): break
                         if sel_action == 'DELETE':
                             last_deleted_term = sel_val; terms.remove(sel_val); save_state(state)
@@ -1199,7 +1288,7 @@ def run_app(stdscr):
                 elif v_choice == "mapping":
                     while True:
                         maps = state["vocab"].get("mappings", {})
-                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_map_title'),[(f"{k} = {v}", k) for k, v in maps.items()] +[(t('tui_vc_add_map'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True) or (None, None)
+                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_map_title'),[(f"{k} = {v}", k) for k, v in maps.items()] +[(t('tui_vc_add_map'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True, allow_search=True) or (None, None)
                         if sel_action in (None, 'QUIT'): break
                         if sel_action == 'DELETE':
                             last_deleted_map = (sel_val, maps[sel_val]); del maps[sel_val]; save_state(state)
