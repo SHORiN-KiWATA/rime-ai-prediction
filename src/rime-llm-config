@@ -1,0 +1,1181 @@
+#!/usr/bin/env python3
+# 描述： Rime LLM Translator 综合配置工具 (Main Menu + SearchModels 混合架构)
+
+import os
+os.environ.setdefault('ESCDELAY', '25')
+
+import curses
+import json
+import urllib.request
+import urllib.error
+import unicodedata
+import locale
+import threading
+import sys
+import shutil
+import datetime
+import subprocess
+import re
+
+# ==========================================
+# 🌐 国际化与双语支持 (I18N)
+# ==========================================
+locale.setlocale(locale.LC_ALL, '')
+
+def is_chinese_env():
+    lang = os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
+    if lang.lower().startswith("zh"): return True
+    try:
+        loc = locale.getlocale()[0] or ""
+        return loc.lower().startswith("zh")
+    except Exception: return False
+
+LANG = "zh" if is_chinese_env() else "en"
+
+I18N = {
+    "en": {
+        # CLI
+        "cli_help_title": "Usage: rime-llm-config [COMMAND]\n\nCommands:",
+        "cli_help_tui": "  (empty) / tui    : Open the TUI Configuration Manager.",
+        "cli_help_init": "  init             : Initialize Rime and restart Fcitx5.",
+        "cli_help_sync": "  sync             : Sync configurations to Lua.",
+        "cli_help_stat": "  status           : Show current configuration info.",
+        "cli_help_h": "  -h / --help      : Show this help message.",
+        "cli_bk_create": "Backup created at: {}",
+        "cli_fcitx_not_run": "Fcitx5 is not currently running. Deployment skipped.",
+        "cli_fcitx_restarting": "Fcitx5 is running. Attempting to restart...",
+        "cli_fcitx_ok_sysd": "Fcitx5 restarted via systemd. Rime deployed.",
+        "cli_fcitx_ok_cli": "Fcitx5 restarted via CLI. Rime deployed.",
+        "cli_fcitx_fail": "Failed to restart Fcitx5 automatically: {}",
+        "cli_tut_title": "Rime-LLM Translator Initialization Complete! Quick Start Guide",
+        "cli_tut_1": "1. Test Connect: Type test{}. If you see success msg, it works.",
+        "cli_tut_2": "2. Wake up AI : Type pinyin and press [{}] twice.",
+        "cli_tut_2_ex": "(e.g., nihaoshijie{})",
+        "cli_tut_3": "3. Config GUI : Run `rime-llm-config` in terminal.",
+        "cli_tut_3_ex": "Supports model switching, custom vocab, parameter editing, etc.",
+        "cli_init_start": "Start initializing Rime-LLM Translator...",
+        "cli_init_mkdir": "Creating missing directory: {}",
+        "cli_init_gen_config": "Generating default configurations...",
+        "cli_init_ok_config": "Default configurations generated at: {}",
+        "cli_init_ok_lua": "Appended module registration to rime.lua",
+        "cli_init_skip_lua": "rime.lua already configured.",
+        "cli_init_new_lua": "Created rime.lua and registered module.",
+        "cli_init_ice_det": "Detected Rime Ice (wusong) schema.",
+        "cli_init_ok_yaml": "Appended LLM patch to rime_ice.custom.yaml.",
+        "cli_init_skip_yaml": "rime_ice.custom.yaml already patched.",
+        "cli_init_new_yaml": "Created rime_ice.custom.yaml with LLM patch.",
+        "cli_init_no_ice": "Rime Ice not detected. Manual schema patch required.",
+        "cli_sync_ok": "Sync complete. Exported to: {}",
+        "cli_stat_prof": "Current Profile:",
+        "cli_stat_model": "Model          :",
+        "cli_stat_state": "State file     :",
+        "cli_stat_lua": "Lua target     :",
+        "cli_err_cmd": "Unknown command: {}",
+        
+        # TUI Main
+        "tui_main_title": " RIME LLM CONFIG ",
+        "tui_opt_switch": "Activate Profile (current: {})",
+        "tui_opt_edit": "Providers & Models",
+        "tui_opt_settings": "Prompt & Parameters",
+        "tui_opt_vocab": "Custom Vocab",
+        "tui_opt_export": "Save & Exit",
+        
+        # TUI Switch
+        "tui_sw_title": " Select Profile ",
+        "tui_sw_err": "No fully configured profiles found.\nPlease edit API URL, Key and Select Model first.",
+        
+        # TUI Settings
+        "tui_st_title": " Detailed Settings ",
+        "tui_st_prompt": "Prompt",
+        "tui_st_trigger": "AI Trigger",
+        "tui_st_tokens": "Max Tokens",
+        "tui_st_temp": "Temperature",
+        "tui_st_time": "Reply Timeout",
+        
+        # TUI Vocab
+        "tui_vc_title": " Custom Vocab ",
+        "tui_vc_opt_term": "Common En Terms",
+        "tui_vc_opt_map": "Pinyin Mappings",
+        "tui_vc_term_title": " Common En Terms ",
+        "tui_vc_map_title": " Pinyin Mappings ",
+        "tui_vc_add_term": "+ Add New Term",
+        "tui_vc_add_map": "+ Add New Mapping",
+        "tui_vc_fm_add_term": " Add Term ",
+        "tui_vc_fm_edit_term": " Edit Term ",
+        "tui_vc_fm_add_map": " Add Mapping ",
+        "tui_vc_fm_edit_map": " Edit Mapping ",
+        "tui_lbl_term": "Term",
+        "tui_lbl_pinyin": "Pinyin",
+        "tui_lbl_result": "Result",
+        
+        # TUI Export
+        "tui_exp_succ": " Success ",
+        "tui_exp_err": " Error ",
+        "tui_exp_msg": "Config saved to:\n{}\n\nPlease Deploy Rime!",
+        
+        # TUI Forms & Buttons
+        "tui_btn_save": "[ Save ]",
+        "tui_btn_cancel": "[ Cancel ]",
+        "tui_btn_del": "[ Delete ]",
+        "tui_btn_ok": " [Enter] OK ",
+        "tui_hint_menu": "[Enter]Select [q]Back",
+        "tui_hint_menu_del": "[Enter]Edit  [d]Del  [u]Undo  [q]Back",
+        "tui_hint_form_nav": "[j/k] Nav [h/l] Buttons [i/Enter] Edit [q] Cancel ",
+        "tui_hint_form_edit": " [←/→] Move Cursor  [Enter/Esc] Done Editing ",
+        "tui_hint_textarea": "[ESC/TAB] Save & Exit  [Enter] Newline ",
+        "tui_placeholder_ta": "(Multi-line, press Enter/i to edit)",
+        
+        # TUI SearchModels
+        "tui_sm_prov": " PROVIDERS ",
+        "tui_sm_org": " ORG ",
+        "tui_sm_mod": " MODELS ",
+        "tui_sm_mod_srch": " MODELS (Search: {}) ",
+        "tui_sm_fetch": "Fetching models...",
+        "tui_sm_err": "✗ {}",
+        "tui_sm_err_id_invalid": "✗ Invalid ID (alphanumeric & _ only)",
+        "tui_sm_err_id_exist": "✗ Profile ID already exists!",
+        "tui_sm_no_mod": "No models.",
+        "tui_sm_srch": " SEARCH: {}_ (Enter: Confirm) ",
+        "tui_sm_nav": "[Esc/q]Back [/]Search [r]Reload [a]Add [d]Del [h/l]Nav [i/Enter]Edit [Enter]Set Model",
+        "tui_sm_add_prov": " Add Provider ",
+        "tui_sm_edit_prov": " Edit Info: {} ",
+        "tui_sm_lbl_id": "Profile ID",
+        "tui_sm_lbl_name": "Display Name",
+        "tui_sm_lbl_url": "API URL",
+        "tui_sm_lbl_key": "API Key",
+        "tui_sm_set_succ": "✓ '{}' set as model for {}!"
+    },
+    "zh": {
+        # CLI
+        "cli_help_title": "用法: rime-llm-config [命令]\n\n可用命令:",
+        "cli_help_tui": "  (留空) / tui     : 启动图形化(TUI)配置管理器",
+        "cli_help_init": "  init             : 初始化",
+        "cli_help_sync": "  sync             : 同步配置",
+        "cli_help_stat": "  status           : 显示当前配置信息",
+        "cli_help_h": "  -h / --help      : 显示此帮助信息",
+        "cli_bk_create": "已创建配置文件备份: {}",
+        "cli_fcitx_not_run": "检测到 Fcitx5 未运行，跳过自动部署。",
+        "cli_fcitx_restarting": "检测到 Fcitx5 运行中，正在尝试重启以部署配置...",
+        "cli_fcitx_ok_sysd": "已通过 Systemd 成功重启 Fcitx5，Rime 部署完毕。",
+        "cli_fcitx_ok_cli": "已通过命令行指令重启 Fcitx5，Rime 部署完毕。",
+        "cli_fcitx_fail": "自动重启 Fcitx5 失败: {}",
+        "cli_tut_title": "Rime-LLM Translator 初始化完成！快速上手指南",
+        "cli_tut_1": "1. 测试连通性 : 输入 test{}，若候选词出现挂载成功说明正常",
+        "cli_tut_2": "2. 唤醒大模型 : 正常输入拼音后，双击 [{}] 键呼出 AI 联想",
+        "cli_tut_2_ex": "(例如输入 nihaoshijie{})",
+        "cli_tut_3": "3. 更改配置项 : 随时在终端执行 `rime-llm-config` 打开图形界面",
+        "cli_tut_3_ex": "支持热切换模型、自定义词库、修改参数或触发键等功能",
+        "cli_init_start": "开始初始化 Rime-LLM Translator...",
+        "cli_init_mkdir": "正在创建缺失的目录: {}",
+        "cli_init_gen_config": "正在生成默认配置...",
+        "cli_init_ok_config": "已生成默认配置至: {}",
+        "cli_init_ok_lua": "已成功向 rime.lua 追加模块注册代码。",
+        "cli_init_skip_lua": "rime.lua 已配置过，跳过注入。",
+        "cli_init_new_lua": "已创建 rime.lua 并写入注册代码。",
+        "cli_init_ice_det": "检测到 雾凇拼音 (rime_ice) 方案。",
+        "cli_init_ok_yaml": "已向 rime_ice.custom.yaml 成功追加 LLM 补丁。",
+        "cli_init_skip_yaml": "rime_ice.custom.yaml 已打过补丁，跳过。",
+        "cli_init_new_yaml": "已新建 rime_ice.custom.yaml 并写入 LLM 补丁。",
+        "cli_init_no_ice": "未检测到雾凇拼音。如使用其他方案，请手动修改对应的 custom.yaml。",
+        "cli_sync_ok": "同步成功。已将 Lua 配置导出至: {}",
+        "cli_stat_prof": "当前生效节点 :",
+        "cli_stat_model": "当前生效模型 :",
+        "cli_stat_state": "JSON状态文件 :",
+        "cli_stat_lua": "Lua 配置路径 :",
+        "cli_err_cmd": "未知的命令: {}",
+        
+        # TUI Main
+        "tui_main_title": " RIME LLM 配置工具 ",
+        "tui_opt_switch": "激活配置 (当前: {})",
+        "tui_opt_edit": "供应商和模型",
+        "tui_opt_settings": "提示词和参数",
+        "tui_opt_vocab": "自定义词库",
+        "tui_opt_export": "保存并退出",
+        
+        # TUI Switch
+        "tui_sw_title": " 选择配置 ",
+        "tui_sw_err": "未找到配置完整的节点。\n请先前往【编辑配置】填写 URL、密钥并设置模型。",
+        
+        # TUI Settings
+        "tui_st_title": " 详细设置 ",
+        "tui_st_prompt": "提示词 (Prompt)",
+        "tui_st_trigger": "触发键 (Trigger)",
+        "tui_st_tokens": "最大输出词元 (Tokens)",
+        "tui_st_temp": "发散度 (Temperature)",
+        "tui_st_time": "回复超时 (Max Time)",
+        
+        # TUI Vocab
+        "tui_vc_title": " 自定义词库 ",
+        "tui_vc_opt_term": "常用英文词 (防错分)",
+        "tui_vc_opt_map": "拼音缩写映射",
+        "tui_vc_term_title": " 常用英文词 ",
+        "tui_vc_map_title": " 拼音缩写映射 ",
+        "tui_vc_add_term": "+ 添加新名词",
+        "tui_vc_add_map": "+ 添加新映射",
+        "tui_vc_fm_add_term": " 添加名词 ",
+        "tui_vc_fm_edit_term": " 编辑名词 ",
+        "tui_vc_fm_add_map": " 添加映射 ",
+        "tui_vc_fm_edit_map": " 编辑映射 ",
+        "tui_lbl_term": "名词内容",
+        "tui_lbl_pinyin": "拼音字母",
+        "tui_lbl_result": "实际输出结果",
+        
+        # TUI Export
+        "tui_exp_succ": " 成功 ",
+        "tui_exp_err": " 错误 ",
+        "tui_exp_msg": "配置已成功保存至:\n{}\n\n请重新部署(Deploy)您的 Rime 拼音！",
+        
+        # TUI Forms & Buttons
+        "tui_btn_save": "[ 保存 ]",
+        "tui_btn_cancel": "[ 取消 ]",
+        "tui_btn_del": "[ 删除 ]",
+        "tui_btn_ok": " [回车] 确定 ",
+        "tui_hint_menu": "[Enter]选择 [q]返回",
+        "tui_hint_menu_del": "[Enter]编辑  [d]删除  [u]撤销  [q]返回",
+        "tui_hint_form_nav": " [j/k]上下选择 [h/l]切换按钮 [i/Enter]编辑 [q]取消 ",
+        "tui_hint_form_edit": " [←/→]移动光标  [Enter/Esc]完成编辑 ",
+        "tui_hint_textarea": "[ESC/TAB] 保存并返回  [Enter] 文本换行 ",
+        "tui_placeholder_ta": "(多行文本，请按 Enter 或 i 键进入全屏编辑)",
+        
+        # TUI SearchModels
+        "tui_sm_prov": " 供应商 ",
+        "tui_sm_org": " 组织 ",
+        "tui_sm_mod": " 可用模型 ",
+        "tui_sm_mod_srch": " 可用模型 (搜索: {}) ",
+        "tui_sm_fetch": "正在向 API 获取模型列表...",
+        "tui_sm_err": "✗ 获取失败: {}",
+        "tui_sm_err_id_invalid": "✗ 配置ID无效 (仅限字母、数字、下划线)",
+        "tui_sm_err_id_exist": "✗ 该配置ID已存在！",
+        "tui_sm_no_mod": "未找到模型。",
+        "tui_sm_srch": " 搜索: {}_ (回车确认) ",
+        "tui_sm_nav": "[Esc/q]返回 [/]搜索 [r]刷新 [a]新增 [d]删除 [h/l]导航 [i/Enter]编辑 [Enter]设为首选模型",
+        "tui_sm_add_prov": " 新增供应商 ",
+        "tui_sm_edit_prov": " 编辑配置: {} ",
+        "tui_sm_lbl_id": "配置ID(英文)",
+        "tui_sm_lbl_name": "显示名称",
+        "tui_sm_lbl_url": "API 地址",
+        "tui_sm_lbl_key": "API 密钥",
+        "tui_sm_set_succ": "✓ 已将 '{}' 设为 {} 的首选模型！"
+    }
+}
+
+def t(key, *args):
+    s = I18N[LANG].get(key, key)
+    if args: return s.format(*args)
+    return s
+
+# ==========================================
+# 📂 路径与状态管理
+# ==========================================
+SYSTEM_DEFAULT_CONFIG = "/usr/share/rime-llm-translator/default_state.json"
+CONFIG_DIR = os.path.expanduser("~/.config/rime-llm-translator")
+STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
+LUA_FILE = os.path.join(CONFIG_DIR, "config.lua")
+
+def get_default_state():
+    if os.path.exists(SYSTEM_DEFAULT_CONFIG):
+        try:
+            with open(SYSTEM_DEFAULT_CONFIG, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "active_profile": "siliconflow",
+        "profiles": {
+            "siliconflow": {
+                "name": "SiliconFlow",
+                "api_url": "https://api.siliconflow.cn/v1/chat/completions",
+                "api_key": "sk-lltlfdcrqwxfbmhgljslljfdbcpdbgxcngxdqkopdsfwjpnj",
+                "model": "THUDM/GLM-4-9B-0414"
+            }
+        },
+        "settings": {
+            "prompt": "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见输入内容。你的职责是把用户的拼音转化为流畅、通顺、合理的句子。你要识别出拼音中的错输、乱序等问题，通过切分用户的拼音推理出正确的句子。注意几点：1. 准确还原语境中的英文词汇。2. 高度重视【纯首字母简拼】（如mrfz=明日方舟）。3. 重视【前后鼻音】区分，用户可能发给你错误的前后鼻音，你要通过前后的拼音上下文做出正确的判断。严格遵守：绝对不要输出解释、思考内容、拼音或双引号！【特殊情况】如果用户发来由：“这是命令”或者“call:”之类的内容开头的内容，说明后面是对你的指令，而不是需要翻译的拼音。",
+            "ai_trigger": "v", "max_tokens": 4000, "temperature": 0.1,
+            "connect_timeout": 2.0, "max_time": 30.0
+        },
+        "vocab": {"terms":["vibecoding", "rime", "bootloader", "wm", "de"], "mappings": {"yyds": "永远的神", "mrfz": "明日方舟", "srwc": "是人我吃", "yihuan": "异环"}}
+    }
+
+def load_state():
+    default_state = get_default_state()
+    if not os.path.exists(STATE_FILE): return default_state
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for k in default_state:
+                if k not in data: data[k] = default_state[k]
+            for pk, pv in default_state["profiles"].items():
+                if pk not in data["profiles"]: data["profiles"][pk] = pv
+            if "max_time" not in data["settings"]: data["settings"]["max_time"] = 30.0
+            return data
+    except Exception: return default_state
+
+def save_state(state):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=4)
+
+def export_to_lua(state):
+    vocab_str = "\n# -------- 常用英文/网络黑话 --------\n"
+    for term in state["vocab"].get("terms",[]): vocab_str += f"{term}\n"
+    vocab_str += "\n# -------- 首字母简拼/拼音缩写映射 --------\n"
+    for k, v in state["vocab"].get("mappings", {}).items(): vocab_str += f"{k}={v}\n"
+
+    profiles_str = ""
+    for pid, p in state["profiles"].items():
+        profiles_str += f"""
+        {pid} = {{
+            name = "{p.get('name', pid)}",
+            api_url = "{p.get('api_url', '')}",
+            api_key = "{p.get('api_key', '')}",
+            model = "{p.get('model', '')}",
+        }},"""
+
+    settings = state["settings"]
+    lua_code = f"""-- =========================================================
+-- 文件名：config.lua
+-- 存放位置：~/.config/rime-llm-translator/
+-- 由 rime-llm-config 自动生成，请勿手动修改此文件！
+-- =========================================================
+
+return {{
+    active_profile = "{state.get('active_profile', '')}",
+    profiles = {{{profiles_str}
+    }},
+    ai_trigger = "{settings.get('ai_trigger', 'v')}",
+    prompt = "{settings.get('prompt', '')}",
+    max_tokens = {settings.get('max_tokens', 4000)},
+    temperature = {settings.get('temperature', 0.1)},
+    connect_timeout = {settings.get('connect_timeout', 2.0)}, 
+    max_time = {settings.get('max_time', 30.0)},
+    vocab_text = [[{vocab_str}    ]]
+}}
+"""
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(LUA_FILE, "w", encoding="utf-8") as f: f.write(lua_code)
+    return LUA_FILE
+
+# ==========================================
+# 🚀 CLI 参数处理与自动初始化
+# ==========================================
+
+C_BLU = '\033[94m'; C_GRN = '\033[92m'; C_YLW = '\033[93m'; C_RED = '\033[91m'
+C_CYN = '\033[96m'; C_GRY = '\033[90m'; C_RES = '\033[0m'; C_BLD = '\033[1m'
+
+L_INFO = f"{C_BLU}[INFO]{C_RES}   "
+L_OK   = f"{C_GRN}[OK]{C_RES}     "
+L_WARN = f"{C_YLW}[WARN]{C_RES}   "
+L_ERR  = f"{C_RED}[ERROR]{C_RES}  "
+L_SKIP = f"{C_GRY}[SKIP]{C_RES}   "
+
+def backup_file(filepath):
+    if not os.path.exists(filepath): return
+    backup_dir = os.path.expanduser("~/.cache/rime-llm-config/backup/")
+    os.makedirs(backup_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    basename = os.path.basename(filepath)
+    backup_path = os.path.join(backup_dir, f"{basename}.{timestamp}.bak")
+    shutil.copy2(filepath, backup_path)
+    print(f"{L_INFO} " + t("cli_bk_create", backup_path))
+
+def restart_fcitx5():
+    try:
+        if subprocess.run(["pgrep", "-x", "fcitx5"], capture_output=True).returncode != 0:
+            print(f"{L_INFO} " + t("cli_fcitx_not_run"))
+            return
+        print(f"{L_INFO} " + t("cli_fcitx_restarting"))
+        if shutil.which("systemctl"):
+            res = subprocess.run(["systemctl", "--user", "is-active", "fcitx5"], capture_output=True, text=True)
+            if res.stdout.strip() == "active":
+                subprocess.run(["systemctl", "--user", "restart", "fcitx5"])
+                print(f"{L_OK} " + t("cli_fcitx_ok_sysd"))
+                return
+        subprocess.Popen(["fcitx5", "-r", "-d"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"{L_OK} " + t("cli_fcitx_ok_cli"))
+    except Exception as e:
+        print(f"{L_WARN} " + t("cli_fcitx_fail", str(e)))
+
+def print_tutorial():
+    state = load_state()
+    trigger = state.get("settings", {}).get("ai_trigger", "v")
+    
+    print(f"\n{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"{C_GRN}{C_BLD}  {t('cli_tut_title')}{C_RES}")
+    print(f"{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"  {C_YLW}{t('cli_tut_1', trigger)}{C_RES}")
+    print(f"  {C_YLW}{t('cli_tut_2', trigger)}{C_RES}")
+    print(f"  {C_GRY}                   {t('cli_tut_2_ex', trigger)}{C_RES}")
+    print(f"  {C_YLW}{t('cli_tut_3')}{C_RES}")
+    print(f"  {C_GRY}                   {t('cli_tut_3_ex')}{C_RES}")
+    print(f"{C_CYN}{C_BLD}======================================================================={C_RES}\n")
+
+def init_rime_config():
+    print(f"{L_INFO} " + t("cli_init_start"))
+    rime_dir = os.path.expanduser("~/.local/share/fcitx5/rime")
+    if not os.path.exists(rime_dir):
+        print(f"{L_WARN} " + t("cli_init_mkdir", rime_dir))
+        os.makedirs(rime_dir, exist_ok=True)
+    
+    # 检测并生成默认配置
+    if not os.path.exists(STATE_FILE) or not os.path.exists(LUA_FILE):
+        print(f"{L_INFO} " + t("cli_init_gen_config"))
+        state = load_state() # 若无文件则返回默认字典
+        save_state(state)
+        export_to_lua(state)
+        print(f"{L_OK} " + t("cli_init_ok_config", CONFIG_DIR))
+
+    rime_lua = os.path.join(rime_dir, "rime.lua")
+    lua_inject = 'llm_translator = require("llm_translator")\n'
+    if os.path.exists(rime_lua):
+        with open(rime_lua, 'r', encoding='utf-8') as f: content = f.read()
+        if "llm_translator" not in content:
+            backup_file(rime_lua)
+            with open(rime_lua, 'a', encoding='utf-8') as f: f.write("\n" + lua_inject)
+            print(f"{L_OK} " + t("cli_init_ok_lua"))
+        else: print(f"{L_SKIP} " + t("cli_init_skip_lua"))
+    else:
+        with open(rime_lua, 'w', encoding='utf-8') as f: f.write(lua_inject)
+        print(f"{L_OK} " + t("cli_init_new_lua"))
+
+    ice_installed = os.path.exists("/usr/share/rime-data/rime_ice.schema.yaml") or \
+                    os.path.exists(os.path.join(rime_dir, "rime_ice.schema.yaml"))
+    
+    if ice_installed:
+        print(f"{L_INFO} " + t("cli_init_ice_det"))
+        custom_yaml = os.path.join(rime_dir, "rime_ice.custom.yaml")
+        patch_content = """
+  # 1. 扩充允许输入的字符集：允许在拼音中直接输入指定的标点符号，阻止其直接上屏
+  "speller/alphabet": "zyxwvutsrqponmlkjihgfedcba.,?'!:"
+  # 2. 将 Lua AI 脚本 (llm_translator) 强行插入到处理列表的第 0 位之前
+  "engine/translators/@before 0": lua_translator@llm_translator
+  # 3. 定义正则捕获规则：把输入当成不可分割的整体喂给 AI 脚本处理
+  "recognizer/patterns/llm_pinyin": "^[a-z][a-z.,?'!:]*$"
+"""
+        if os.path.exists(custom_yaml):
+            with open(custom_yaml, 'r', encoding='utf-8') as f: content = f.read()
+            if "llm_translator" not in content:
+                backup_file(custom_yaml)
+                if "patch:" in content:
+                    content = content.replace("patch:", "patch:\n" + patch_content, 1)
+                    with open(custom_yaml, 'w', encoding='utf-8') as f: f.write(content)
+                else:
+                    with open(custom_yaml, 'a', encoding='utf-8') as f: f.write("\npatch:\n" + patch_content)
+                print(f"{L_OK} " + t("cli_init_ok_yaml"))
+            else: print(f"{L_SKIP} " + t("cli_init_skip_yaml"))
+        else:
+            with open(custom_yaml, 'w', encoding='utf-8') as f: f.write("patch:\n" + patch_content)
+            print(f"{L_OK} " + t("cli_init_new_yaml"))
+    else:
+        print(f"{L_WARN} " + t("cli_init_no_ice"))
+        
+    restart_fcitx5()
+    print_tutorial()
+
+def print_help():
+    print(t("cli_help_title"))
+    print(t("cli_help_tui"))
+    print(t("cli_help_init"))
+    print(t("cli_help_sync"))
+    print(t("cli_help_stat"))
+    print(t("cli_help_h") + "\n")
+
+def cli_handler():
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1].lower()
+        if cmd in ("-h", "--help", "help"): print_help(); return True
+        elif cmd == "init": init_rime_config(); return True
+        elif cmd == "sync":
+            state = load_state(); out = export_to_lua(state)
+            print(f"{L_OK} " + t("cli_sync_ok", out))
+            return True
+        elif cmd == "status":
+            state = load_state()
+            active = state.get("active_profile", "None")
+            p = state["profiles"].get(active, {})
+            print(f"{t('cli_stat_prof')} {active} ({p.get('name', 'N/A')})")
+            print(f"{t('cli_stat_model')} {p.get('model', 'None')}")
+            print(f"{t('cli_stat_state')} {STATE_FILE}")
+            print(f"{t('cli_stat_lua')} {LUA_FILE}")
+            return True
+        elif cmd == "tui": return False
+        else:
+            print(f"{L_ERR} " + t("cli_err_cmd", cmd))
+            print_help()
+            return True
+    return False
+
+# ==========================================
+# 🎨 基础 UI 组件
+# ==========================================
+
+C_MAIN, C_HL, C_TITLE, C_ERR, C_SUCCESS = 1, 2, 3, 4, 5
+
+def init_colors():
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(C_MAIN, curses.COLOR_WHITE, -1)
+    curses.init_pair(C_HL, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(C_TITLE, curses.COLOR_CYAN, -1)
+    curses.init_pair(C_ERR, curses.COLOR_RED, -1)
+    curses.init_pair(C_SUCCESS, curses.COLOR_GREEN, -1)
+
+def str_width(s): return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in str(s))
+def pad_str(s, width): return s + " " * max(0, width - str_width(s))
+
+def truncate_str(s, max_width):
+    w = 0; res =[]
+    for c in str(s):
+        cw = str_width(c)
+        if w + cw > max_width: break
+        res.append(c); w += cw
+    return "".join(res)
+
+def _safe_addstr(win, y, x, text, attr=0):
+    try: win.addstr(y, x, text, attr)
+    except curses.error: pass
+
+def draw_box(stdscr, y, x, h, w, title=""):
+    stdscr.attron(curses.color_pair(C_TITLE))
+    _safe_addstr(stdscr, y, x, "┌" + "─"*(w-2) + "┐")
+    for r in range(1, h-1): _safe_addstr(stdscr, y+r, x, "│" + " "*(w-2) + "│")
+    _safe_addstr(stdscr, y+h-1, x, "└" + "─"*(w-2) + "┘")
+    if title: _safe_addstr(stdscr, y, x+2, f" {title} ", curses.A_BOLD)
+    stdscr.attroff(curses.color_pair(C_TITLE))
+
+def msgbox(stdscr, title, text):
+    stdscr.timeout(-1)
+    lines = text.split('\n')
+    sh, sw = stdscr.getmaxyx()
+    w = min(sw - 4, max(40, max((str_width(l) for l in lines), default=0) + 4))
+    h = min(sh - 4, len(lines) + 4)
+    y, x = (sh - h) // 2, (sw - w) // 2
+    
+    stdscr.erase()
+    draw_box(stdscr, y, x, h, w, title)
+    for i, l in enumerate(lines):
+        if i >= h - 4: break
+        _safe_addstr(stdscr, y + 2 + i, x + 2, l, curses.color_pair(C_MAIN))
+    _safe_addstr(stdscr, y + h - 1, x + w - str_width(t('tui_btn_ok')) - 4, t('tui_btn_ok'), curses.color_pair(C_TITLE))
+    stdscr.refresh()
+    while True:
+        k = stdscr.getch()
+        if k in (10, 13, 27, ord('q'), ord('Q')): break
+
+def textarea_dialog(stdscr, title, text):
+    stdscr.timeout(-1)
+    chars = list(text)
+    cursor = len(chars)
+    
+    while True:
+        sh, sw = stdscr.getmaxyx()
+        h, w = int(sh*0.8), int(sw*0.9)
+        y, x = (sh-h)//2, (sw-w)//2
+        
+        stdscr.erase()
+        draw_box(stdscr, y, x, h, w, title)
+        _safe_addstr(stdscr, y+h-1, x+2, t('tui_hint_textarea'), curses.color_pair(C_TITLE))
+        
+        lines, curr_line, curr_w, cursor_pos = [],[], 0, (0, 0)
+        for i, ch in enumerate(chars + ['']):
+            if i == cursor: cursor_pos = (len(lines), str_width(''.join(curr_line)))
+            if ch == '\n':
+                lines.append(''.join(curr_line)); curr_line, curr_w =[], 0
+            elif ch != '':
+                cw = str_width(ch)
+                if curr_w + cw > w - 4:
+                    lines.append(''.join(curr_line)); curr_line, curr_w =[ch], cw
+                else: curr_line.append(ch); curr_w += cw
+        if curr_line or (chars and chars[-1] == '\n'): lines.append(''.join(curr_line))
+        if not lines: lines =[""]
+        
+        max_lines = h - 2
+        start_row = max(0, cursor_pos[0] - max_lines + 1)
+        for r in range(max_lines):
+            lr = start_row + r
+            if lr < len(lines): _safe_addstr(stdscr, y+1+r, x+2, lines[lr], curses.color_pair(C_MAIN))
+        
+        cy, cx = y + 1 + cursor_pos[0] - start_row, x + 2 + cursor_pos[1]
+        if y + 1 <= cy < y + h - 1:
+            c_char = chars[cursor] if cursor < len(chars) and chars[cursor] != '\n' else " "
+            _safe_addstr(stdscr, cy, cx, c_char, curses.A_REVERSE)
+        
+        stdscr.refresh()
+        try: k = stdscr.get_wch()
+        except: continue
+        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
+        
+        if code in (27, 9): return "".join(chars)
+        elif code == curses.KEY_LEFT: cursor = max(0, cursor - 1)
+        elif code == curses.KEY_RIGHT: cursor = min(len(chars), cursor + 1)
+        elif code == curses.KEY_UP: cursor = max(0, cursor - 30)
+        elif code == curses.KEY_DOWN: cursor = min(len(chars), cursor + 30)
+        elif code in (curses.KEY_BACKSPACE, 127, 8):
+            if cursor > 0: chars.pop(cursor - 1); cursor -= 1
+        elif code in (10, 13): chars.insert(cursor, '\n'); cursor += 1
+        elif char.isprintable(): chars.insert(cursor, char); cursor += 1
+
+def menu_dialog(stdscr, title, options, default_idx=0, hint=None, allow_delete=False, allow_undo=False):
+    if hint is None: hint = t('tui_hint_menu')
+    stdscr.timeout(-1)
+    sh, sw = stdscr.getmaxyx()
+    h = min(sh - 4, len(options) + 4)
+    w = min(sw - 4, max(40, max((str_width(o[0]) for o in options), default=0) + 10))
+    y, x = (sh - h) // 2, (sw - w) // 2
+    
+    sel = default_idx
+    while True:
+        stdscr.erase()
+        draw_box(stdscr, y, x, h, w, title)
+        _safe_addstr(stdscr, y + h - 1, x + 2, f" {hint} ", curses.color_pair(C_TITLE))
+        
+        list_h = h - 2
+        start_idx = max(0, min(sel - list_h // 2, len(options) - list_h))
+        
+        for i in range(list_h):
+            idx = start_idx + i
+            if idx >= len(options): break
+            text = options[idx][0]
+            
+            disp_w, vis_str = 0, ""
+            for ch in text:
+                cw = str_width(ch)
+                if disp_w + cw > w - 4: break
+                vis_str += ch; disp_w += cw
+                
+            attr = curses.color_pair(C_HL) if idx == sel else curses.color_pair(C_MAIN)
+            _safe_addstr(stdscr, y + 1 + i, x + 2, pad_str(vis_str, w - 4), attr)
+            
+        stdscr.refresh()
+        k = stdscr.getch()
+        code = k if isinstance(k, int) else ord(k)
+        
+        if code in (27, ord('q'), ord('Q')): return ('QUIT', None) if allow_delete else None
+        elif code in (curses.KEY_UP, ord('k')): sel = max(0, sel - 1)
+        elif code in (curses.KEY_DOWN, ord('j')): sel = min(len(options) - 1, sel + 1)
+        elif code == ord('d') and allow_delete and options[sel][1] != "NEW": return ('DELETE', options[sel][1])
+        elif code == ord('u') and allow_undo: return ('UNDO', None)
+        elif code in (10, 13):
+            return ('SELECT', options[sel][1]) if allow_delete else options[sel][1]
+
+def form_dialog(stdscr, title, fields, show_delete=False):
+    stdscr.timeout(-1)
+    sh, sw = stdscr.getmaxyx()
+    h = min(sh - 2, len(fields) * 2 + 6)
+    w = min(sw - 2, 80)
+    y, x = (sh - h) // 2, (sw - w) // 2
+    
+    sel = 0
+    mode = "NAV" 
+    btn_save_idx = len(fields)
+    btn_cancel_idx = len(fields) + 1
+    btn_del_idx = len(fields) + 2 if show_delete else -1
+    max_sel = len(fields) + (2 if show_delete else 1)
+    
+    cursors, scrolls =[len(str(f["value"])) for f in fields],[0 for _ in fields]
+
+    while True:
+        stdscr.erase()
+        draw_box(stdscr, y, x, h, w, title)
+        
+        hint = t('tui_hint_form_nav') if mode == "NAV" else t('tui_hint_form_edit')
+        _safe_addstr(stdscr, y + h - 1, x + 2, hint, curses.color_pair(C_TITLE))
+        
+        for i, f in enumerate(fields):
+            fy = y + 2 + i * 2
+            _safe_addstr(stdscr, fy, x + 2, f["label"], curses.color_pair(C_TITLE))
+            
+            val = str(f["value"])
+            field_w = w - 4 - str_width(f["label"]) - 2
+            fx = x + 4 + str_width(f["label"])
+            attr = curses.color_pair(C_HL) if (sel == i and mode == "NAV") else curses.A_UNDERLINE
+            
+            if f.get("type") == "textarea":
+                vis = t('tui_placeholder_ta') if sel == i else truncate_str(val.replace('\n', ' '), field_w)
+                _safe_addstr(stdscr, fy, fx, pad_str(vis, field_w), attr)
+                continue
+
+            disp_val = val + " "
+            if cursors[i] < scrolls[i]: scrolls[i] = cursors[i]
+            elif cursors[i] >= scrolls[i] + field_w: scrolls[i] = cursors[i] - field_w + 1
+            
+            vis = disp_val[scrolls[i]:scrolls[i]+field_w]
+            cursor_rel = cursors[i] - scrolls[i]
+            
+            left_str = vis[:cursor_rel]
+            cursor_char = vis[cursor_rel] if cursor_rel < len(vis) else " "
+            right_str = vis[cursor_rel+1:]
+            
+            _safe_addstr(stdscr, fy, fx, left_str, attr)
+            if sel == i and mode == "EDIT":
+                _safe_addstr(stdscr, fy, fx + str_width(left_str), cursor_char, curses.A_REVERSE)
+            else:
+                _safe_addstr(stdscr, fy, fx + str_width(left_str), cursor_char, attr)
+            _safe_addstr(stdscr, fy, fx + str_width(left_str) + str_width(cursor_char), right_str, attr)
+            
+            filled = str_width(left_str) + str_width(cursor_char) + str_width(right_str)
+            if filled < field_w:
+                _safe_addstr(stdscr, fy, fx + filled, " " * (field_w - filled), attr)
+
+        by = y + h - 3
+        bx = x + 8
+        _safe_addstr(stdscr, by, bx, t('tui_btn_save'), curses.color_pair(C_HL) if sel == btn_save_idx else curses.color_pair(C_MAIN))
+        bx += str_width(t('tui_btn_save')) + 4
+        _safe_addstr(stdscr, by, bx, t('tui_btn_cancel'), curses.color_pair(C_HL) if sel == btn_cancel_idx else curses.color_pair(C_MAIN))
+        if show_delete:
+            bx += str_width(t('tui_btn_cancel')) + 4
+            _safe_addstr(stdscr, by, bx, t('tui_btn_del'), curses.color_pair(C_ERR) | curses.A_REVERSE if sel == btn_del_idx else curses.color_pair(C_ERR))
+
+        stdscr.refresh()
+        try: k = stdscr.get_wch()
+        except curses.error: continue
+        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
+
+        if mode == "NAV":
+            if code in (27, ord('q'), ord('Q')): 
+                return None
+            elif code in (10, 13, ord('i'), ord('I')):
+                if sel == btn_cancel_idx: return None
+                elif sel == btn_save_idx: return [str(f["value"]) for f in fields]
+                elif sel == btn_del_idx: return "DELETE"
+                elif sel < len(fields) and fields[sel].get("type") == "textarea":
+                    fields[sel]["value"] = textarea_dialog(stdscr, fields[sel]["label"], fields[sel]["value"])
+                    cursors[sel] = len(fields[sel]["value"])
+                elif sel < len(fields):
+                    mode = "EDIT"
+            elif code == 9: sel = (sel + 1) % (max_sel + 1)
+            elif code in (curses.KEY_DOWN, ord('j')): sel = min(max_sel, sel + 1)
+            elif code in (curses.KEY_UP, ord('k')): sel = max(0, sel - 1)
+            elif sel >= len(fields):
+                if code in (curses.KEY_LEFT, ord('h')): sel = max(len(fields), sel - 1)
+                elif code in (curses.KEY_RIGHT, ord('l')): sel = min(max_sel, sel + 1)
+        else:
+            current_val = str(fields[sel]["value"])
+            c = cursors[sel]
+            
+            if code in (27, 10, 13): mode = "NAV" 
+            elif code == curses.KEY_LEFT: cursors[sel] = max(0, c - 1)
+            elif code == curses.KEY_RIGHT: cursors[sel] = min(len(current_val), c + 1)
+            elif code in (curses.KEY_BACKSPACE, 127, 8):
+                if c > 0:
+                    fields[sel]["value"] = current_val[:c-1] + current_val[c:]
+                    cursors[sel] -= 1
+            elif char.isprintable():
+                fields[sel]["value"] = current_val[:c] + char + current_val[c:]
+                cursors[sel] += 1
+
+# ==========================================
+# 🌐 获取模型 (智能路由 Anthropic API)
+# ==========================================
+
+def parse_models(data):
+    if isinstance(data, dict):
+        if "data" in data and isinstance(data["data"], list):
+            return[(m.get("id") or m.get("name") or "") for m in data["data"] if isinstance(m, dict)]
+        if "models" in data and isinstance(data["models"], list):
+            return[(m.get("name", "").replace("models/", "") or m.get("id", "")) for m in data["models"] if isinstance(m, dict)]
+    if isinstance(data, list):
+        return[(m.get("id") or m.get("name") or str(m)) if isinstance(m, dict) else str(m) for m in data]
+    return[]
+
+def fetch_models(api_url, api_key):
+    url = api_url
+    is_anthropic = "anthropic" in url or "/messages" in url
+
+    if "11434" in url:
+        url = url.split("/v1/")[0].split("/api/")[0] + "/api/tags"
+    elif "generativelanguage.googleapis.com" in url:
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if api_key: url += f"?key={api_key}"
+    elif is_anthropic:
+        url = url.replace("/messages", "/models")
+    else:
+        url = url.replace("/openai/chat/completions", "/models").replace("/chat/completions", "/models").replace("/text/chatcompletion_v2", "/models")
+        if not url.endswith("/models") and not url.endswith("/tags"): url = url.rstrip("/") + "/models"
+
+    headers = {"User-Agent": "rime-llm", "Accept": "application/json"}
+    
+    if api_key and "generativelanguage" not in url:
+        if is_anthropic:
+            headers["x-api-key"] = api_key
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = f"Bearer {api_key}"
+            headers["x-api-key"] = api_key
+
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return[m for m in parse_models(json.loads(resp.read().decode("utf-8"))) if m], None
+    except Exception as e: return[], str(e)
+
+class ProviderEditorTUI:
+    def __init__(self, stdscr, state):
+        self.stdscr = stdscr
+        self.state = state
+        self._sync_from_state()
+        self.active_col, self.prov_idx, self.org_idx, self.model_idx = 0, 0, 0, 0
+        self.scrolls =[0, 0, 0]
+        self.raw_models, self.parsed_tree, self.org_list, self.model_list = [], {}, [],[]
+        self.show_org, self.loading, self.error, self.filter_str, self.filter_mode = False, False, "", "", False
+        self.status_msg, self.status_flash, self.fetch_seq = "", 0, 0
+
+    def _sync_from_state(self):
+        self.providers =[]
+        for pid, p in self.state["profiles"].items():
+            self.providers.append({"id": pid, "name": p.get("name", pid), "api_url": p.get("api_url", ""), "api_key": p.get("api_key", ""), "model": p.get("model", "")})
+        self.providers.sort(key=lambda x: x["name"].lower())
+        if not self.providers: self.providers.append({"id": "empty", "name": "No Providers", "api_url": "", "api_key": "", "model": ""})
+
+    def run(self):
+        self._trigger_fetch()
+        while True:
+            self.stdscr.timeout(100)
+            self._draw()
+            try: k = self.stdscr.get_wch()
+            except curses.error:
+                if self.status_flash > 0: self.status_flash -= 1
+                else: self.status_msg = ""
+                continue
+            
+            self.stdscr.timeout(-1)
+            if not self._handle_key(k): break
+
+    def _trigger_fetch(self):
+        if not self.providers or self.providers[0]["id"] == "empty": return
+        prov = self.providers[self.prov_idx]
+        self.raw_models, self.parsed_tree, self.org_list, self.model_list = [], {},[],[]
+        self.org_idx, self.model_idx, self.scrolls[1], self.scrolls[2] = 0, 0, 0, 0
+        self.filter_str, self.filter_mode, self.loading, self.error, self.show_org = "", False, True, "", False
+        self.fetch_seq += 1
+        seq = self.fetch_seq
+
+        def worker():
+            m, err = fetch_models(prov["api_url"], prov["api_key"])
+            if getattr(self, 'fetch_seq', 0) != seq: return
+            self.raw_models, self.error, self.loading = m, err or "", False
+            self._rebuild_tree()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _rebuild_tree(self):
+        if not self.raw_models:
+            self.org_list, self.show_org =[], False
+            self._update_model_list()
+            return
+        prov = self.providers[self.prov_idx]
+        f = self.filter_str.lower()
+        v_models =[m for m in self.raw_models if not f or f in m.lower()]
+        self.parsed_tree = {"All":[]}
+        for m in v_models:
+            org = m.split("/", 1)[0] if "/" in m else prov["name"]
+            self.parsed_tree["All"].append({"name": m.split("/", 1)[-1] if "/" in m else m, "full": m})
+            if org.lower() not in ["models", prov["name"].lower()]:
+                if org not in self.parsed_tree: self.parsed_tree[org] =[]
+                self.parsed_tree[org].append({"name": m.split("/", 1)[-1], "full": m})
+        self.org_list = ["All"] + sorted([k for k in self.parsed_tree.keys() if k != "All"])
+        self.show_org = len(self.org_list) > 1
+        self.org_idx = min(self.org_idx, max(0, len(self.org_list) - 1))
+        self._update_model_list()
+
+    def _update_model_list(self):
+        if not self.org_list: self.model_list =[]
+        else: self.model_list = sorted(self.parsed_tree[self.org_list[self.org_idx]], key=lambda x: x["name"].lower())
+        self.model_idx = min(self.model_idx, max(0, len(self.model_list) - 1))
+        
+        if not self.show_org and self.active_col == 1: self.active_col = 2
+
+    def _handle_key(self, k):
+        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
+
+        if self.filter_mode:
+            if code in (27, curses.KEY_F3):
+                self.filter_mode = False; self._rebuild_tree()
+                return True
+            elif code in (10, 13): 
+                self.filter_mode = False
+                return True 
+            elif code in (curses.KEY_BACKSPACE, 127, 8): 
+                self.filter_str = self.filter_str[:-1]; self._rebuild_tree()
+            elif char.isprintable(): 
+                self.filter_str += char; self._rebuild_tree()
+            return True
+
+        if code in (27, ord('q'), ord('Q')): return False
+
+        if code == curses.KEY_LEFT or char.lower() == 'h':
+            if self.active_col == 2: self.active_col = 1 if self.show_org else 0
+            elif self.active_col == 1: self.active_col = 0
+            if self.filter_str: self.filter_str = ""; self._rebuild_tree()
+        elif code == curses.KEY_RIGHT or char.lower() == 'l':
+            if self.active_col == 0: self.active_col = 1 if self.show_org and self.org_list else (2 if not self.show_org and self.model_list else 0)
+            elif self.active_col == 1 and self.model_list: self.active_col = 2
+        elif code == curses.KEY_DOWN or char.lower() == 'j':
+            if self.active_col == 0 and self.prov_idx < len(self.providers) - 1: self.prov_idx += 1; self._trigger_fetch()
+            elif self.active_col == 1 and self.org_idx < len(self.org_list) - 1: self.org_idx += 1; self._update_model_list()
+            elif self.active_col == 2 and self.model_idx < len(self.model_list) - 1: self.model_idx += 1
+        elif code == curses.KEY_UP or char.lower() == 'k':
+            if self.active_col == 0 and self.prov_idx > 0: self.prov_idx -= 1; self._trigger_fetch()
+            elif self.active_col == 1 and self.org_idx > 0: self.org_idx -= 1; self._update_model_list()
+            elif self.active_col == 2 and self.model_idx > 0: self.model_idx -= 1
+        elif char == '/': self.filter_mode = True
+        elif char.lower() == 'r': self._trigger_fetch()
+        elif char.lower() == 'a':
+            res = form_dialog(self.stdscr, t('tui_sm_add_prov'),[{"label": t('tui_sm_lbl_id'),"value":""}, {"label":t('tui_sm_lbl_name'),"value":""}, {"label":t('tui_sm_lbl_url'),"value":""}, {"label":t('tui_sm_lbl_key'),"value":""}])
+            if res:
+                pid = res[0].strip()
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', pid):
+                    self.status_msg, self.status_flash = t('tui_sm_err_id_invalid'), 30
+                    return True
+                if pid in self.state["profiles"]:
+                    self.status_msg, self.status_flash = t('tui_sm_err_id_exist'), 30
+                    return True
+                
+                self.state["profiles"][pid] = {"name": res[1], "api_url": res[2], "api_key": res[3], "model": ""}
+                save_state(self.state)
+                self._sync_from_state()
+                # 重新定位到刚新建的配置项
+                for i, prov in enumerate(self.providers):
+                    if prov["id"] == pid: self.prov_idx = i; break
+                self._trigger_fetch()
+        elif char.lower() == 'd' and self.active_col == 0 and self.providers[self.prov_idx]["id"] != "empty":
+            pid = self.providers[self.prov_idx]["id"]
+            if pid == self.state.get("active_profile"): self.state["active_profile"] = ""
+            del self.state["profiles"][pid]
+            save_state(self.state); self.prov_idx = max(0, self.prov_idx - 1); self._sync_from_state(); self._trigger_fetch()
+        elif code in (10, 13, ord('i'), ord('I')):
+            if self.active_col == 0 and self.providers[0]["id"] != "empty":
+                p = self.providers[self.prov_idx]
+                res = form_dialog(self.stdscr, t('tui_sm_edit_prov', p['name']),[
+                    {"label":t('tui_sm_lbl_id'),"value":p["id"]}, 
+                    {"label":t('tui_sm_lbl_name'),"value":p["name"]}, 
+                    {"label":t('tui_sm_lbl_url'),"value":p["api_url"]}, 
+                    {"label":t('tui_sm_lbl_key'),"value":p["api_key"]}
+                ])
+                if res:
+                    new_id = res[0].strip()
+                    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', new_id):
+                        self.status_msg, self.status_flash = t('tui_sm_err_id_invalid'), 30
+                        return True
+                    if new_id != p["id"] and new_id in self.state["profiles"]:
+                        self.status_msg, self.status_flash = t('tui_sm_err_id_exist'), 30
+                        return True
+                        
+                    # 如果更改了ID，我们需要更新字典的键，并确保 active_profile 不会失效
+                    if new_id != p["id"]:
+                        self.state["profiles"][new_id] = self.state["profiles"].pop(p["id"])
+                        if self.state.get("active_profile") == p["id"]:
+                            self.state["active_profile"] = new_id
+
+                    self.state["profiles"][new_id].update({"name": res[1], "api_url": res[2], "api_key": res[3]})
+                    save_state(self.state)
+                    self._sync_from_state()
+                    # 修改后可能因为排序导致顺序变动，重新定位
+                    for i, prov in enumerate(self.providers):
+                        if prov["id"] == new_id: self.prov_idx = i; break
+                    self._trigger_fetch()
+            elif self.active_col == 2 and self.model_list:
+                m = self.model_list[self.model_idx]["full"]
+                pid = self.providers[self.prov_idx]["id"]
+                self.state["profiles"][pid]["model"] = m
+                save_state(self.state); self._sync_from_state()
+                self.status_msg, self.status_flash = t('tui_sm_set_succ', m, self.providers[self.prov_idx]['name']), 30
+
+        if self.status_flash > 0: self.status_flash -= 1
+        else: self.status_msg = ""
+        return True
+
+    def _draw(self):
+        self.stdscr.erase()
+        h, w = self.stdscr.getmaxyx()
+        w1 = max(22, min(32, max((str_width(p["name"]) for p in self.providers), default=20) + 4))
+        w2 = max(22, min(32, max((str_width(o) for o in self.org_list), default=20) + 4)) if self.show_org else 0
+        w3 = w - w1 - w2 - (2 if self.show_org else 1)
+
+        for row in range(0, h):
+            _safe_addstr(self.stdscr, row, w1, "│", curses.color_pair(C_TITLE) | curses.A_DIM)
+            if self.show_org: _safe_addstr(self.stdscr, row, w1 + 1 + w2, "│", curses.color_pair(C_TITLE) | curses.A_DIM)
+
+        if self.status_msg: msg, attr = f" {self.status_msg} ", curses.color_pair(C_SUCCESS)|curses.A_BOLD
+        elif self.filter_mode: msg, attr = t('tui_sm_srch', self.filter_str), curses.color_pair(C_TITLE)|curses.A_BOLD
+        else: msg, attr = t('tui_sm_nav'), curses.color_pair(C_TITLE)
+        
+        _safe_addstr(self.stdscr, h - 1, 0, pad_str(msg, w)[:w], attr)
+
+        self._draw_list(0, h - 1, w1, t('tui_sm_prov'), [p["name"] for p in self.providers], self.prov_idx, 0, 0)
+        if self.show_org: 
+            self._draw_list(w1 + 1, h - 1, w2, t('tui_sm_org'), self.org_list, self.org_idx, 1, 1)
+            m_x = w1 + 1 + w2 + 1
+        else:
+            m_x = w1 + 1
+            
+        self._draw_models(m_x, h - 1, w3, 2)
+        self.stdscr.refresh()
+
+    def _draw_list(self, x_offset, h, w, title, items, cur_idx, scroll_idx, col_idx):
+        _safe_addstr(self.stdscr, 0, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+        _safe_addstr(self.stdscr, 0, x_offset + max(0, (w - str_width(title)) // 2), title, curses.color_pair(C_HL if self.active_col == col_idx else C_TITLE))
+        list_h = h - 2
+        if cur_idx < self.scrolls[scroll_idx]: self.scrolls[scroll_idx] = cur_idx
+        elif cur_idx >= self.scrolls[scroll_idx] + list_h: self.scrolls[scroll_idx] = cur_idx - list_h + 1
+        for i in range(list_h):
+            idx = i + self.scrolls[scroll_idx]
+            if idx >= len(items): break
+            is_cur = (idx == cur_idx) and (col_idx <= self.active_col)
+            attr = curses.color_pair(C_HL) if (is_cur and self.active_col == col_idx) else (curses.color_pair(C_TITLE)|curses.A_REVERSE if is_cur else curses.color_pair(C_TITLE))
+            
+            disp_w, vis_str = 0, ""
+            prefix = "► " if is_cur and self.active_col == col_idx else "  "
+            for ch in prefix + items[idx]:
+                cw = str_width(ch)
+                if disp_w + cw > w - 1: break
+                vis_str += ch; disp_w += cw
+                
+            _safe_addstr(self.stdscr, i + 1, x_offset, pad_str(vis_str, w - 1), attr)
+        _safe_addstr(self.stdscr, h - 1, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+
+    def _draw_models(self, x_offset, h, w, col_idx):
+        title = t('tui_sm_mod_srch', self.filter_str) if self.filter_str else t('tui_sm_mod')
+        _safe_addstr(self.stdscr, 0, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+        _safe_addstr(self.stdscr, 0, x_offset + max(0, (w - str_width(title)) // 2), title, curses.color_pair(C_HL if self.active_col == col_idx else C_TITLE))
+
+        if self.loading: 
+            _safe_addstr(self.stdscr, 2, x_offset + 2, t('tui_sm_fetch'), curses.color_pair(C_TITLE))
+        elif self.error: 
+            err_str = t('tui_sm_err', str(self.error).replace('\n', ' '))
+            err_msg = truncate_str(err_str, w - 4)
+            _safe_addstr(self.stdscr, 2, x_offset + 2, err_msg, curses.color_pair(C_ERR))
+        elif not self.model_list: 
+            _safe_addstr(self.stdscr, 2, x_offset + 2, t('tui_sm_no_mod'), curses.color_pair(C_TITLE))
+        else:
+            list_h = h - 2
+            if self.model_idx < self.scrolls[2]: self.scrolls[2] = self.model_idx
+            elif self.model_idx >= self.scrolls[2] + list_h: self.scrolls[2] = self.model_idx - list_h + 1
+            for i in range(list_h):
+                idx = i + self.scrolls[2]
+                if idx >= len(self.model_list): break
+                m_name = self.model_list[idx]['name']
+                if self.providers[self.prov_idx]["model"] == self.model_list[idx]["full"]: m_name += "[Current]"
+                is_cur = (idx == self.model_idx) and (self.active_col >= col_idx)
+                attr = curses.color_pair(C_HL) if (is_cur and self.active_col == col_idx) else (curses.color_pair(C_TITLE)|curses.A_REVERSE if is_cur else curses.color_pair(C_TITLE))
+                
+                disp_w, vis_str = 0, ""
+                prefix = "► " if is_cur and self.active_col == col_idx else "  "
+                for ch in prefix + m_name:
+                    cw = str_width(ch)
+                    if disp_w + cw > w - 1: break
+                    vis_str += ch; disp_w += cw
+                    
+                _safe_addstr(self.stdscr, i + 1, x_offset, pad_str(vis_str, w - 1), attr)
+        _safe_addstr(self.stdscr, h - 1, x_offset, "─" * w, curses.color_pair(C_TITLE) | curses.A_DIM)
+
+# ==========================================
+# 🚀 主运行程序
+# ==========================================
+
+def run_app(stdscr):
+    init_colors()
+    curses.curs_set(0)
+    state = load_state()
+    
+    while True:
+        act_name = state["profiles"].get(state.get("active_profile", ""), {}).get("name", "None")
+        main_opts =[
+            (t('tui_opt_switch', act_name), "switch"),
+            (t('tui_opt_edit'), "edit_profiles"),
+            (t('tui_opt_settings'), "edit_settings"),
+            (t('tui_opt_vocab'), "edit_vocab"),
+            (t('tui_opt_export'), "export")
+        ]
+        
+        choice = menu_dialog(stdscr, t('tui_main_title'), main_opts)
+        if choice in (None, "QUIT", "exit"): break
+        
+        if choice == "switch":
+            valid_opts =[]
+            for k, v in state["profiles"].items():
+                if v.get('api_url') and v.get('api_key') and v.get('model'):
+                    valid_opts.append((f"{v.get('name', k)} [{v.get('model')}]", k))
+            if not valid_opts:
+                msgbox(stdscr, t('msg_info'), t('tui_sw_err'))
+                continue
+            
+            res = menu_dialog(stdscr, t('tui_sw_title'), valid_opts)
+            if res and res != 'QUIT': state["active_profile"] = res; save_state(state)
+                
+        elif choice == "edit_profiles":
+            ProviderEditorTUI(stdscr, state).run()
+
+        elif choice == "edit_settings":
+            s = state["settings"]
+            res = form_dialog(stdscr, t('tui_st_title'),[
+                {"label": t('tui_st_prompt'), "value": s.get("prompt", ""), "type": "textarea"},
+                {"label": t('tui_st_trigger'), "value": s.get("ai_trigger", "v")},
+                {"label": t('tui_st_tokens'), "value": str(s.get("max_tokens", 4000))},
+                {"label": t('tui_st_temp'), "value": str(s.get("temperature", 0.1))},
+                {"label": t('tui_st_time'), "value": str(s.get("max_time", 30.0))}
+            ])
+            if res:
+                s["prompt"], s["ai_trigger"] = res[0], res[1]
+                s["max_tokens"] = int(res[2]) if res[2].isdigit() else 4000
+                s["temperature"] = float(res[3]) if res[3].replace('.','',1).isdigit() else 0.1
+                s["max_time"] = float(res[4]) if res[4].replace('.','',1).isdigit() else 30.0
+                save_state(state)
+
+        elif choice == "edit_vocab":
+            last_deleted_term, last_deleted_map = None, None
+            while True:
+                v_choice = menu_dialog(stdscr, t('tui_vc_title'),[(t('tui_vc_opt_term'), "terms"), (t('tui_vc_opt_map'), "mapping")])
+                if v_choice in (None, 'QUIT'): break
+                if v_choice == "terms":
+                    while True:
+                        terms = state["vocab"].get("terms",[])
+                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_term_title'), [(t, t) for t in terms] +[(t('tui_vc_add_term'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True) or (None, None)
+                        if sel_action in (None, 'QUIT'): break
+                        if sel_action == 'DELETE':
+                            last_deleted_term = sel_val; terms.remove(sel_val); save_state(state)
+                        elif sel_action == 'UNDO' and last_deleted_term:
+                            terms.append(last_deleted_term); save_state(state); last_deleted_term = None
+                        elif sel_action == 'SELECT':
+                            if sel_val == "NEW":
+                                res = form_dialog(stdscr, t('tui_vc_fm_add_term'), [{"label": t('tui_lbl_term'), "value": ""}])
+                                if res and res[0]: terms.append(res[0]); save_state(state)
+                            else:
+                                res = form_dialog(stdscr, t('tui_vc_fm_edit_term'),[{"label": t('tui_lbl_term'), "value": sel_val}], show_delete=True)
+                                if res == "DELETE":
+                                    terms.remove(sel_val); save_state(state)
+                                elif isinstance(res, list) and res[0].strip():
+                                    terms.remove(sel_val); terms.append(res[0].strip()); save_state(state)
+                elif v_choice == "mapping":
+                    while True:
+                        maps = state["vocab"].get("mappings", {})
+                        sel_action, sel_val = menu_dialog(stdscr, t('tui_vc_map_title'),[(f"{k} = {v}", k) for k, v in maps.items()] +[(t('tui_vc_add_map'), "NEW")], hint=t('tui_hint_menu_del'), allow_delete=True, allow_undo=True) or (None, None)
+                        if sel_action in (None, 'QUIT'): break
+                        if sel_action == 'DELETE':
+                            last_deleted_map = (sel_val, maps[sel_val]); del maps[sel_val]; save_state(state)
+                        elif sel_action == 'UNDO' and last_deleted_map:
+                            maps[last_deleted_map[0]] = last_deleted_map[1]; save_state(state); last_deleted_map = None
+                        elif sel_action == 'SELECT':
+                            if sel_val == "NEW":
+                                res = form_dialog(stdscr, t('tui_vc_fm_add_map'),[{"label": t('tui_lbl_pinyin'), "value": ""}, {"label": t('tui_lbl_result'), "value": ""}])
+                                if res and res[0] and res[1]: maps[res[0]] = res[1]; save_state(state)
+                            else:
+                                res = form_dialog(stdscr, t('tui_vc_fm_edit_map'),[{"label": t('tui_lbl_pinyin'), "value": sel_val}, {"label": t('tui_lbl_result'), "value": maps[sel_val]}], show_delete=True)
+                                if res == "DELETE":
+                                    del maps[sel_val]; save_state(state)
+                                elif isinstance(res, list) and res[0].strip():
+                                    del maps[sel_val]; maps[res[0].strip()] = res[1]; save_state(state)
+
+        elif choice == "export":
+            try:
+                out = export_to_lua(state)
+                msgbox(stdscr, t('tui_exp_succ'), t('tui_exp_msg', out))
+                break
+            except Exception as e:
+                msgbox(stdscr, t('tui_exp_err'), str(e))
+
+if __name__ == "__main__": 
+    if cli_handler(): sys.exit(0)
+    try: curses.wrapper(run_app)
+    except KeyboardInterrupt: pass
+    except Exception as e: print(f"Fatal error: {e}")
