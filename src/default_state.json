@@ -62,7 +62,7 @@
         "max_tokens": 4000,
         "temperature": 0.1,
         "connect_timeout": 2.0,
-        "max_time": 10.0
+        "max_time": 25.0
     },
     "vocab": {
         "terms":["vibecoding", "rime", "bootloader", "wm", "de"],
