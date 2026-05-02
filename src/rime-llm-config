@@ -161,7 +161,7 @@ I18N = {
         "cli_fcitx_fail": "自动重启 Fcitx5 失败: {}",
         "cli_tut_title": "Rime-LLM Translator 初始化完成！快速上手指南",
         "cli_tut_1": "1. 测试连通性 : 输入 test{}，若候选词出现挂载成功说明正常",
-        "cli_tut_2": "2. 唤醒大模型 : 正常输入拼音后，双击 [{}] 键呼出 AI 联想",
+        "cli_tut_2": "2. 唤醒大模型 : 正常输入拼音后，输入 [{}] 键呼出 AI 联想",
         "cli_tut_2_ex": "(例如输入 nihaoshijie{})",
         "cli_tut_3": "3. 更改配置项 : 随时在终端执行 `rime-llm-config` 打开图形界面",
         "cli_tut_3_ex": "支持热切换模型、自定义词库、修改参数或触发键等功能",

@@ -38,7 +38,7 @@ local function translator(input, seg, env)
     if string.sub(input, -trigger_len) ~= trigger then return end
 
     if input == ("test" .. trigger) then
-        yield(Candidate("llm", seg.start, seg._end, "rime-llm-translator 挂载成功!", "连通测试"))
+        yield(Candidate("llm", seg.start, seg._end, "✅ rime-llm-translator 挂载成功!", "连通测试"))
         return
     end
 
