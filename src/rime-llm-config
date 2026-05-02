@@ -778,6 +778,54 @@ def parse_models(data):
         return[(m.get("id") or m.get("name") or str(m)) if isinstance(m, dict) else str(m) for m in data]
     return[]
 
+def normalize_api_url(url):
+    """
+    智能格式化 API URL：将用户模糊输入的 Base URL 或错误的 Endpoint 统一转为标准对话接口。
+    """
+    url = url.strip().rstrip("/")
+    if not url: return url
+
+    url_lower = url.lower()
+
+    # 1. 针对 Anthropic (Claude)
+    if "anthropic" in url_lower or "claude" in url_lower:
+        if url_lower.endswith("/models"):
+            url = url[:-7] # 去除 /models
+        if not url_lower.endswith("/messages"):
+            if url_lower.endswith("/v1"): return url + "/messages"
+            return url + "/v1/messages"
+        return url
+
+    # 2. 针对 Ollama (默认端口 11434)
+    if "11434" in url_lower:
+        # 如果用户错填了获取模型的接口
+        if url_lower.endswith("/api/tags"): url = url[:-9]
+        elif url_lower.endswith("/v1/models"): url = url[:-10]
+        elif url_lower.endswith("/models"): url = url[:-7]
+        
+        # 补全为兼容 OpenAI 格式的 endpoint
+        if not url_lower.endswith("/chat/completions"):
+            if url_lower.endswith("/v1"): return url + "/chat/completions"
+            elif url_lower.endswith("/api"): return url + "/chat" # Ollama 原生接口
+            else: return url + "/v1/chat/completions" # 默认推断为 v1 兼容接口
+        return url
+
+    # 3. 针对 Google Gemini
+    if "generativelanguage" in url_lower:
+        # Gemini 的 URL 结构比较特殊，通常包含 model_name，尽量保持原样或做简单清理
+        return url
+
+    # 4. 针对标准 OpenAI 及其兼容代理 (SiliconFlow, DeepSeek, 各种中转)
+    if not url_lower.endswith("/chat/completions"):
+        if url_lower.endswith("/models"):
+            url = url[:-7]
+        if url_lower.endswith("/v1"):
+            return url + "/chat/completions"
+        else:
+            return url + "/v1/chat/completions"
+
+    return url
+
 def fetch_models(api_url, api_key):
     url = api_url
     is_anthropic = "anthropic" in url or "/messages" in url
@@ -931,7 +979,8 @@ class ProviderEditorTUI:
                     self.status_msg, self.status_flash = t('tui_sm_err_id_exist'), 30
                     return True
                 
-                self.state["profiles"][pid] = {"name": res[1], "api_url": res[2], "api_key": res[3], "model": ""}
+                norm_url = normalize_api_url(res[2])
+                self.state["profiles"][pid] = {"name": res[1], "api_url": norm_url, "api_key": res[3], "model": ""}
                 save_state(self.state)
                 self._sync_from_state()
                 # 重新定位到刚新建的配置项
@@ -967,7 +1016,8 @@ class ProviderEditorTUI:
                         if self.state.get("active_profile") == p["id"]:
                             self.state["active_profile"] = new_id
 
-                    self.state["profiles"][new_id].update({"name": res[1], "api_url": res[2], "api_key": res[3]})
+                    norm_url = normalize_api_url(res[2])
+                    self.state["profiles"][new_id].update({"name": res[1], "api_url": norm_url, "api_key": res[3]})
                     save_state(self.state)
                     self._sync_from_state()
                     # 修改后可能因为排序导致顺序变动，重新定位
