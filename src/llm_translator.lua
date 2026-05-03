@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- 文件名：llm_translator.lua
--- 功能：基于 LLM 的拼音长句整句翻译引擎 (支持 OpenAI / Anthropic 智能切换)
+-- 功能：基于 LLM 的拼音长句整句翻译引擎 (支持 OpenAI / Anthropic / 思考模式智能切换)
 -- ==============================================================================
 
 local function load_config()
@@ -21,6 +21,17 @@ local function load_config()
     local success, cfg = pcall(chunk)
     if success and type(cfg) == "table" then return cfg, nil end
     return nil, "配置格式错误"
+end
+
+-- 将包含换行、双引号等内容的 Lua 字符串安全转化为 JSON 合法字符串
+local function escape_json(str)
+    if not str then return "" end
+    local s = string.gsub(str, "\\", "\\\\")
+    s = string.gsub(s, '"', '\\"')
+    s = string.gsub(s, "\n", "\\n")
+    s = string.gsub(s, "\r", "\\r")
+    s = string.gsub(s, "\t", "\\t")
+    return s
 end
 
 local function translator(input, seg, env)
@@ -57,26 +68,71 @@ local function translator(input, seg, env)
         return
     end
 
-    local safe_prompt = string.gsub(Config.prompt or "", '"', '\\"')
-    local safe_text = string.gsub(send_text, '"', '\\"')
+    -- 通过全新的 escape_json 函数进行终极安全处理
+    local safe_prompt = escape_json(Config.prompt or "")
+    local safe_text = escape_json(send_text)
     
-    -- 智能识别 Anthropic (Claude) 协议
-    local is_anthropic = string.find(current_ai.api_url, "anthropic") or string.find(current_ai.api_url, "messages$")
+    local url_lower = string.lower(current_ai.api_url)
+    local model_lower = string.lower(current_ai.model)
+
+    -- 智能识别厂商协议
+    local is_anthropic = string.find(url_lower, "anthropic") or string.find(url_lower, "messages$")
+    local is_deepseek = (string.find(url_lower, "deepseek") or string.find(model_lower, "deepseek")) and not string.find(model_lower, "chat")
+    local is_gemini = string.find(url_lower, "generativelanguage") or string.find(model_lower, "gemini")
+    
+    local runtime_model = current_ai.model
+    local thinking_json = ""
+    local req_max_tokens = Config.max_tokens or 4000
+    
+-- 思考模式处理逻辑
+    local is_thinking_enabled = false
+    local effort = "high"
+    
+    local mode_str = current_ai.thinking_mode or ""
+    if mode_str ~= "" and not string.find(mode_str, "Disabled") and not string.find(mode_str, "关闭") then
+        is_thinking_enabled = true
+        if string.find(mode_str, "Low") or string.find(mode_str, "低") then effort = "low"
+        elseif string.find(mode_str, "Medium") or string.find(mode_str, "中") then effort = "medium"
+        elseif string.find(mode_str, "Max") then effort = "max" -- [修复 2] 补充匹配 Max 强度，适配 DeepSeek v4
+        end
+    end
+
+    if is_thinking_enabled then
+        if is_anthropic then
+            -- Anthropic 强制要求 budget_tokens < max_tokens
+            local budget = math.floor(req_max_tokens * 0.8)
+            if budget < 1024 then budget = 1024 end
+            if req_max_tokens <= budget then req_max_tokens = budget + 100 end
+            thinking_json = string.format(',"thinking": {"type": "enabled", "budget_tokens": %d}', budget)
+        elseif is_deepseek then
+            runtime_model = string.gsub(runtime_model, "deepseek%-chat", "deepseek-reasoner")
+            thinking_json = string.format(',"thinking":{"type":"enabled"},"reasoning_effort":"%s"', effort)
+        else
+            -- Gemini 等 OpenAI Proxy 模型 (自动映射 thinkingLevel)
+            thinking_json = string.format(',"reasoning_effort":"%s"', effort)
+        end
+    else
+        if is_deepseek then
+            runtime_model = string.gsub(runtime_model, "deepseek%-reasoner", "deepseek-chat")
+            thinking_json = ',"thinking":{"type":"disabled"}'
+        elseif is_gemini then
+            thinking_json = ',"reasoning_effort":"low"'
+        end
+    end
+
     local json_data = ""
     local auth_headers = ""
 
     if is_anthropic then
-        -- Anthropic 格式: system 和 messages 是平级的，role 只有 user/assistant
         json_data = string.format(
-            '{"model":"%s","system":"%s","messages":[{"role":"user","content":"%s"}],"temperature":%s,"max_tokens":%s}',
-            current_ai.model, safe_prompt, safe_text, Config.temperature or 0.1, Config.max_tokens or 4000
+            '{"model":"%s","system":"%s","messages":[{"role":"user","content":"%s"}],"temperature":%s,"max_tokens":%s%s}',
+            runtime_model, safe_prompt, safe_text, Config.temperature or 0.1, req_max_tokens, thinking_json
         )
         auth_headers = string.format("-H 'x-api-key: %s' -H 'anthropic-version: 2023-06-01'", api_key)
     else
-        -- OpenAI 兼容格式
         json_data = string.format(
-            '{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}],"temperature":%s,"max_tokens":%s}',
-            current_ai.model, safe_prompt, safe_text, Config.temperature or 0.1, Config.max_tokens or 4000
+            '{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}],"temperature":%s,"max_tokens":%s%s}',
+            runtime_model, safe_prompt, safe_text, Config.temperature or 0.1, req_max_tokens, thinking_json
         )
         auth_headers = string.format("-H 'Authorization: Bearer %s'", api_key)
     end
@@ -111,7 +167,7 @@ local function translator(input, seg, env)
     
     if raw_content then
         raw_content = string.gsub(raw_content, "__QUOTE__", '"')
-        local clean = string.gsub(raw_content, "\\n", "")
+        local clean = string.gsub(raw_content, "\\n", "\n")
         clean = string.gsub(clean, "<think>.-</think>", "")
         clean = string.gsub(clean, "<think>.*", "")
         clean = string.gsub(clean, "^%s*(.-)%s*$", "%1")

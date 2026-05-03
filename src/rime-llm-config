@@ -16,6 +16,7 @@ import shutil
 import datetime
 import subprocess
 import re
+import tempfile
 
 # ==========================================
 # 🌐 国际化与双语支持 (I18N)
@@ -76,7 +77,7 @@ I18N = {
         "tui_main_title": " RIME LLM CONFIG ",
         "tui_opt_switch": "Activate Profile (current: {})",
         "tui_opt_edit": "Providers & Models",
-        "tui_opt_settings": "Prompt & Parameters",
+        "tui_opt_settings": "Global Parameters",
         "tui_opt_vocab": "Custom Vocab",
         "tui_opt_export": "Save & Exit",
         
@@ -85,7 +86,7 @@ I18N = {
         "tui_sw_err": "No fully configured profiles found.\nPlease edit API URL, Key and Select Model first.",
         
         # TUI Settings
-        "tui_st_title": " Detailed Settings ",
+        "tui_st_title": " Global Parameters ",
         "tui_st_prompt": "Prompt",
         "tui_st_trigger": "AI Trigger",
         "tui_st_tokens": "Max Tokens",
@@ -124,9 +125,9 @@ I18N = {
         "tui_hint_search": " [/]Search",
         "tui_menu_no_match": "No matches found.",
         "tui_hint_form_nav": "[j/k] Nav [h/l] Buttons [i/Enter] Edit [q] Cancel ",
-        "tui_hint_form_edit": " [←/→] Move Cursor  [Enter/Esc] Done ",
-        "tui_hint_textarea": "[ESC/TAB] Save & Exit  [Enter] Newline ",
-        "tui_placeholder_ta": "(Multi-line, press Enter/i to edit)",
+        "tui_hint_form_edit": " [←/→] Edit Select/Cursor  [Enter/Esc] Done ",
+        "tui_hint_textarea": "[Enter] Open Ext Editor (Vim)  [Esc/q] Cancel",
+        "tui_placeholder_ta": "(Press Enter to open Vim/Nano)",
         
         # TUI SearchModels
         "tui_sm_prov": " PROVIDERS ",
@@ -191,7 +192,7 @@ I18N = {
         "tui_main_title": " RIME LLM 配置工具 ",
         "tui_opt_switch": "激活配置 (当前: {})",
         "tui_opt_edit": "供应商和模型",
-        "tui_opt_settings": "提示词和参数",
+        "tui_opt_settings": "全局参数设置",
         "tui_opt_vocab": "自定义词库",
         "tui_opt_export": "保存并退出",
         
@@ -200,13 +201,13 @@ I18N = {
         "tui_sw_err": "未找到配置完整的节点。\n请先前往【编辑配置】填写 URL、密钥并设置模型。",
         
         # TUI Settings
-        "tui_st_title": " 详细设置 ",
+        "tui_st_title": " 全局参数设置 ",
         "tui_st_prompt": "提示词 (Prompt)",
         "tui_st_trigger": "触发键 (Trigger)",
         "tui_st_tokens": "最大输出词元 (Tokens)",
         "tui_st_temp": "发散度 (Temperature)",
         "tui_st_time": "回复超时 (Max Time)",
-        "tui_st_thinking": "思考模式 (Thinking)",
+        "tui_st_thinking": "思考模式 (当前节点特有)",
         
         # TUI Vocab
         "tui_vc_title": " 自定义词库 ",
@@ -239,9 +240,9 @@ I18N = {
         "tui_hint_search": " [/]搜索",
         "tui_menu_no_match": "无匹配项",
         "tui_hint_form_nav": " [j/k]上下选择 [h/l]切换按钮 [i/Enter]编辑 [q]取消 ",
-        "tui_hint_form_edit": " [←/→]移动光标  [Enter/Esc]完成编辑 ",
-        "tui_hint_textarea": "[ESC/TAB] 保存并返回  [Enter] 文本换行 ",
-        "tui_placeholder_ta": "(多行文本，请按 Enter 或 i 键进入全屏编辑)",
+        "tui_hint_form_edit": " [←/→]左右切换/移动光标  [Enter/Esc]完成 ",
+        "tui_hint_textarea": "[Enter] 打开外部编辑器(Vim)  [Esc/q] 取消",
+        "tui_placeholder_ta": "(请按 Enter 调用 Vim/Nano 进行编辑)",
         
         # TUI SearchModels
         "tui_sm_prov": " 供应商 ",
@@ -296,10 +297,9 @@ def get_default_state():
             }
         },
         "settings": {
-            "prompt": "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见输入内容。你的职责是把用户的拼音转化为流畅、通顺、合理的句子。你要识别出拼音中的错输、乱序等问题，通过切分用户的拼音推理出正确的句子。注意几点：1. 准确还原语境中的英文词汇。2. 高度重视【纯首字母简拼】（如mrfz=明日方舟）。3. 重视【前后鼻音】区分，用户可能发给你错误的前后鼻音，你要通过前后的拼音上下文做出正确的判断。严格遵守：绝对不要输出解释、思考内容、拼音或双引号！【特殊情况】如果用户发来由：“这是命令”或者“call:”之类的内容开头的内容，说明后面是对你的指令，而不是需要翻译的拼音。",
+            "prompt": "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见领域。你的职责是把用户的纯拼音或包含白名单符号的拼音串转化为流畅、通顺、合理的句子。你要识别出拼音中的错输、漏输、乱序等问题，推理出正确的中文。\n\n请严格遵循以下规则：\n1. 中英混排：准确还原语境中的英文词汇。\n2. 简拼推断：高度重视纯首字母简拼（如 mrfz = 明日方舟）。\n3. 纠错容错：重视前后鼻音混淆（in/ing, en/eng），结合上下文做出正确判断。\n4. 数字与专有名词：如果用户输入了数字的拼音读音（如 yibai, san, erlingerliu, shalujiantaer），请结合语境自动转换为阿拉伯数字或带有正确标点符号的专有名词（如 100, 3, 2026, 《杀戮尖塔2》）。\n\n【严格遵守】：绝对不要输出任何解释、思考过程、拼音或双引号！只输出最终的翻译结果。\n【特殊指令】：如果用户发来的拼音以纯英文 sys: 或 cmd: 开头（例如 cmd:用文言文写一首关于春天的诗），说明冒号后面的内容不是需要翻译的拼音，而是对你下达的直接指令，请直接执行该指令并返回结果。",
             "ai_trigger": "v", "max_tokens": 4000, "temperature": 0.1,
-            "connect_timeout": 2.0, "max_time": 30.0,
-            "thinking_mode": "关闭 (Disabled)"
+            "connect_timeout": 2.0, "max_time": 30.0
         },
         "vocab": {"terms":["vibecoding", "rime", "bootloader", "wm", "de"], "mappings": {"yyds": "永远的神", "mrfz": "明日方舟", "srwc": "是人我吃", "yihuan": "异环"}}
     }
@@ -337,9 +337,13 @@ def export_to_lua(state):
             api_url = "{p.get('api_url', '')}",
             api_key = "{p.get('api_key', '')}",
             model = "{p.get('model', '')}",
+            thinking_mode = "{p.get('thinking_mode', '')}",
         }},"""
 
     settings = state["settings"]
+    prompt_text = settings.get('prompt', '')
+    prompt_lua = prompt_text.replace(']=]', ']=].."]=]"..[=[')
+    
     lua_code = f"""-- =========================================================
 -- 文件名：config.lua
 -- 存放位置：~/.config/rime-llm-translator/
@@ -351,12 +355,11 @@ return {{
     profiles = {{{profiles_str}
     }},
     ai_trigger = "{settings.get('ai_trigger', 'v')}",
-    prompt = "{settings.get('prompt', '')}",
+    prompt = [=[{prompt_lua}]=],
     max_tokens = {settings.get('max_tokens', 4000)},
     temperature = {settings.get('temperature', 0.1)},
     connect_timeout = {settings.get('connect_timeout', 2.0)}, 
     max_time = {settings.get('max_time', 30.0)},
-    thinking_mode = "{settings.get('thinking_mode', '')}",
     vocab_text = [[{vocab_str}    ]]
 }}
 """
@@ -569,59 +572,6 @@ def msgbox(stdscr, title, text):
         k = stdscr.getch()
         if k in (10, 13, 27, ord('q'), ord('Q')): break
 
-def textarea_dialog(stdscr, title, text):
-    stdscr.timeout(-1)
-    chars = list(text)
-    cursor = len(chars)
-    
-    while True:
-        sh, sw = stdscr.getmaxyx()
-        h, w = int(sh*0.8), int(sw*0.9)
-        y, x = (sh-h)//2, (sw-w)//2
-        
-        stdscr.erase()
-        draw_box(stdscr, y, x, h, w, title)
-        _safe_addstr(stdscr, y+h-1, x+2, t('tui_hint_textarea'), curses.color_pair(C_TITLE))
-        
-        lines, curr_line, curr_w, cursor_pos = [],[], 0, (0, 0)
-        for i, ch in enumerate(chars + ['']):
-            if i == cursor: cursor_pos = (len(lines), str_width(''.join(curr_line)))
-            if ch == '\n':
-                lines.append(''.join(curr_line)); curr_line, curr_w =[], 0
-            elif ch != '':
-                cw = str_width(ch)
-                if curr_w + cw > w - 4:
-                    lines.append(''.join(curr_line)); curr_line, curr_w =[ch], cw
-                else: curr_line.append(ch); curr_w += cw
-        if curr_line or (chars and chars[-1] == '\n'): lines.append(''.join(curr_line))
-        if not lines: lines =[""]
-        
-        max_lines = h - 2
-        start_row = max(0, cursor_pos[0] - max_lines + 1)
-        for r in range(max_lines):
-            lr = start_row + r
-            if lr < len(lines): _safe_addstr(stdscr, y+1+r, x+2, lines[lr], curses.color_pair(C_MAIN))
-        
-        cy, cx = y + 1 + cursor_pos[0] - start_row, x + 2 + cursor_pos[1]
-        if y + 1 <= cy < y + h - 1:
-            c_char = chars[cursor] if cursor < len(chars) and chars[cursor] != '\n' else " "
-            _safe_addstr(stdscr, cy, cx, c_char, curses.A_REVERSE)
-        
-        stdscr.refresh()
-        try: k = stdscr.get_wch()
-        except: continue
-        code, char = (k, "") if isinstance(k, int) else (ord(k), k)
-        
-        if code in (27, 9): return "".join(chars)
-        elif code == curses.KEY_LEFT: cursor = max(0, cursor - 1)
-        elif code == curses.KEY_RIGHT: cursor = min(len(chars), cursor + 1)
-        elif code == curses.KEY_UP: cursor = max(0, cursor - 30)
-        elif code == curses.KEY_DOWN: cursor = min(len(chars), cursor + 30)
-        elif code in (curses.KEY_BACKSPACE, 127, 8):
-            if cursor > 0: chars.pop(cursor - 1); cursor -= 1
-        elif code in (10, 13): chars.insert(cursor, '\n'); cursor += 1
-        elif char.isprintable(): chars.insert(cursor, char); cursor += 1
-
 def menu_dialog(stdscr, title, options, default_idx=0, hint=None, allow_delete=False, allow_undo=False, allow_search=False):
     if hint is None: hint = t('tui_hint_menu')
     if allow_search: hint += t('tui_hint_search')
@@ -740,7 +690,6 @@ def form_dialog(stdscr, title, fields, show_delete=False):
                 _safe_addstr(stdscr, fy, fx, pad_str(vis, field_w), attr)
                 continue
                 
-            # 渲染 Select 控件 (带有下三角提示)
             if f.get("type") == "select":
                 vis = f" {val} ▾" if sel == i else f" {val}"
                 _safe_addstr(stdscr, fy, fx, pad_str(vis, field_w), attr)
@@ -790,7 +739,6 @@ def form_dialog(stdscr, title, fields, show_delete=False):
                 elif sel == btn_save_idx: return [str(f["value"]) for f in fields]
                 elif sel == btn_del_idx: return "DELETE"
                 elif sel < len(fields):
-                    # 拦截 Select 控件，直接打开菜单
                     if fields[sel].get("type") == "select":
                         f_sel = fields[sel]
                         opts = [(o, o) for o in f_sel["options"]]
@@ -800,8 +748,26 @@ def form_dialog(stdscr, title, fields, show_delete=False):
                         if choice and choice != 'QUIT':
                             f_sel["value"] = choice
                     elif fields[sel].get("type") == "textarea":
-                        fields[sel]["value"] = textarea_dialog(stdscr, fields[sel]["label"], fields[sel]["value"])
-                        cursors[sel] = len(fields[sel]["value"])
+                        editor = os.environ.get("EDITOR", "vim")
+                        with tempfile.NamedTemporaryFile(suffix=".txt", mode="w+", delete=False, encoding="utf-8") as tf:
+                            tf.write(fields[sel]["value"])
+                            tf_path = tf.name
+                        
+                        curses.endwin()
+                        try:
+                            subprocess.run([editor, tf_path])
+                        except Exception:
+                            try: subprocess.run(["nano", tf_path])
+                            except: pass
+                        stdscr.clear()
+                        stdscr.refresh()
+                        
+                        try:
+                            with open(tf_path, "r", encoding="utf-8") as f:
+                                fields[sel]["value"] = f.read().strip()
+                            os.remove(tf_path)
+                        except Exception: pass
+                        cursors[sel] = 0
                     else:
                         mode = "EDIT"
             elif code == 9: sel = (sel + 1) % (max_sel + 1)
@@ -925,7 +891,7 @@ class ProviderEditorTUI:
     def _sync_from_state(self):
         self.providers =[]
         for pid, p in self.state["profiles"].items():
-            self.providers.append({"id": pid, "name": p.get("name", pid), "api_url": p.get("api_url", ""), "api_key": p.get("api_key", ""), "model": p.get("model", "")})
+            self.providers.append({"id": pid, "name": p.get("name", pid), "api_url": p.get("api_url", ""), "api_key": p.get("api_key", ""), "model": p.get("model", ""), "thinking_mode": p.get("thinking_mode", "")})
         self.providers.sort(key=lambda x: x["name"].lower())
         if not self.providers: self.providers.append({"id": "empty", "name": "No Providers", "api_url": "", "api_key": "", "model": ""})
 
@@ -1038,7 +1004,7 @@ class ProviderEditorTUI:
                     return True
                 
                 norm_url = normalize_api_url(res[2])
-                self.state["profiles"][pid] = {"name": res[1], "api_url": norm_url, "api_key": res[3], "model": ""}
+                self.state["profiles"][pid] = {"name": res[1], "api_url": norm_url, "api_key": res[3], "model": "", "thinking_mode": ""}
                 save_state(self.state)
                 self._sync_from_state()
                 for i, prov in enumerate(self.providers):
@@ -1052,12 +1018,54 @@ class ProviderEditorTUI:
         elif code in (10, 13, ord('i'), ord('I')):
             if self.active_col == 0 and self.providers[0]["id"] != "empty":
                 p = self.providers[self.prov_idx]
-                res = form_dialog(self.stdscr, t('tui_sm_edit_prov', p['name']),[
+                
+		# --- 动态思考配置挂载 ---
+                url_lower = p["api_url"].lower()
+                model_lower = p["model"].lower()
+                is_openrouter = "openrouter" in url_lower
+                is_deepseek = ("deepseek" in url_lower or "deepseek" in model_lower) and "chat" not in model_lower
+                is_gemini = "generativelanguage" in url_lower or "gemini" in model_lower
+                is_anthropic = "anthropic" in url_lower or "claude" in model_lower
+                
+                supports_thinking = is_deepseek or is_gemini or is_anthropic
+                
+                fields_config = [
                     {"label":t('tui_sm_lbl_id'),"value":p["id"]}, 
                     {"label":t('tui_sm_lbl_name'),"value":p["name"]}, 
                     {"label":t('tui_sm_lbl_url'),"value":p["api_url"]}, 
                     {"label":t('tui_sm_lbl_key'),"value":p["api_key"]}
-                ])
+                ]
+                
+                if supports_thinking:
+                    # 根据不同厂商动态生成精准的专属菜单
+                    if is_gemini:
+                        # Gemini: 保留 Minimal 到 High 的梯度
+                        think_opts = ["关闭 / 极低 (Disabled / Minimal)", "开启 - 低 (Low)", "开启 - 中 (Medium)", "开启 - 高 (High)"] if LANG == "zh" else ["Disabled / Minimal", "Enabled (Low)", "Enabled (Medium)", "Enabled (High)"]
+                    elif is_deepseek:
+                        # DeepSeek v4: 官方忽略低/中档位，直接提供高和极高
+                        think_opts = ["关闭 (Disabled)", "开启 - 高 (High)", "开启 - 极高 (Max)"] if LANG == "zh" else ["Disabled", "Enabled (High)", "Enabled (Max)"]
+                    elif is_anthropic:
+                        # Anthropic: 仅通过 budget_tokens 区分开启或关闭
+                        think_opts = ["关闭 (Disabled)", "开启 (Enabled)"] if LANG == "zh" else ["Disabled", "Enabled"]
+                    else:
+                        # 兜底选项
+                        think_opts = ["关闭 (Disabled)", "开启 - 低 (Low)", "开启 - 中 (Medium)", "开启 - 高 (High)"] if LANG == "zh" else ["Disabled", "Enabled (Low)", "Enabled (Medium)", "Enabled (High)"]
+                    
+                    curr_think = p.get("thinking_mode", "")
+                    
+                    # 如果原先保存的值不在新的专属列表里，则自动重置为第一个（关闭）
+                    if not curr_think or curr_think not in think_opts:
+                        curr_think = think_opts[0]
+                        
+                    fields_config.append({
+                        "label": t('tui_st_thinking'),
+                        "value": curr_think,
+                        "type": "select",
+                        "options": think_opts
+                    })
+                
+                res = form_dialog(self.stdscr, t('tui_sm_edit_prov', p['name']), fields_config)
+                
                 if res:
                     new_id = res[0].strip()
                     if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', new_id):
@@ -1074,6 +1082,10 @@ class ProviderEditorTUI:
 
                     norm_url = normalize_api_url(res[2])
                     self.state["profiles"][new_id].update({"name": res[1], "api_url": norm_url, "api_key": res[3]})
+                    
+                    if supports_thinking and len(res) > 4:
+                        self.state["profiles"][new_id]["thinking_mode"] = res[4]
+                        
                     save_state(self.state)
                     self._sync_from_state()
                     for i, prov in enumerate(self.providers):
@@ -1214,21 +1226,6 @@ def run_app(stdscr):
         elif choice == "edit_settings":
             s = state["settings"]
             
-            # 智能检测当前配置是否支持“思考模式”
-            active_prof_id = state.get("active_profile", "")
-            active_prof = state["profiles"].get(active_prof_id, {})
-            url_lower = active_prof.get("api_url", "").lower()
-            model_lower = active_prof.get("model", "").lower()
-
-            # 对于 OpenRouter，由于其内部有严格的模型ID隔离机制（如 deepseek-chat 和 deepseek-r1 分别是不同模型），
-            # 强行通过参数注入可能会导致 400 错误，因此对包含 openrouter 的配置予以忽略。
-            is_openrouter = "openrouter" in url_lower
-            
-            is_deepseek = "deepseek" in url_lower or "deepseek" in model_lower
-            is_gemini = "generativelanguage" in url_lower or "gemini" in model_lower
-            is_anthropic = "anthropic" in url_lower or "claude" in model_lower
-            supports_thinking = (is_deepseek or is_gemini or is_anthropic) and not is_openrouter
-            
             fields_config = [
                 {"label": t('tui_st_prompt'), "value": s.get("prompt", ""), "type": "textarea"},
                 {"label": t('tui_st_trigger'), "value": s.get("ai_trigger", "v")},
@@ -1236,18 +1233,6 @@ def run_app(stdscr):
                 {"label": t('tui_st_temp'), "value": str(s.get("temperature", 0.1))},
                 {"label": t('tui_st_time'), "value": str(s.get("max_time", 30.0))}
             ]
-            
-            if supports_thinking:
-                think_opts = ["Disabled", "Enabled (Low)", "Enabled (Medium)", "Enabled (High)"]
-                if LANG == "zh":
-                    think_opts = ["关闭 (Disabled)", "开启 - 低强度 (Low)", "开启 - 中强度 (Medium)", "开启 - 高强度 (High)"]
-                
-                fields_config.append({
-                    "label": t('tui_st_thinking'),
-                    "value": s.get("thinking_mode", think_opts[0]),
-                    "type": "select",
-                    "options": think_opts
-                })
 
             res = form_dialog(stdscr, t('tui_st_title'), fields_config)
             if res:
@@ -1255,10 +1240,6 @@ def run_app(stdscr):
                 s["max_tokens"] = int(res[2]) if res[2].isdigit() else 4000
                 s["temperature"] = float(res[3]) if res[3].replace('.','',1).isdigit() else 0.1
                 s["max_time"] = float(res[4]) if res[4].replace('.','',1).isdigit() else 30.0
-                
-                if supports_thinking and len(res) > 5:
-                    s["thinking_mode"] = res[5]
-                
                 save_state(state)
 
         elif choice == "edit_vocab":
