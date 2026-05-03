@@ -3,6 +3,10 @@
 -- 功能：基于 LLM 的拼音长句整句翻译引擎 (支持 OpenAI / Anthropic / 思考模式智能切换)
 -- ==============================================================================
 
+-- 🧠 记录最近上屏记录的记忆容器与长度计算
+local commit_history = {}
+local current_history_bytes = 0
+
 local function load_config()
     local home = os.getenv("HOME")
     if not home then return nil, "系统环境变量 HOME 无法读取" end
@@ -85,7 +89,7 @@ local function translator(input, seg, env)
     local thinking_json = ""
     local req_max_tokens = Config.max_tokens or 4000
     
--- 思考模式处理逻辑
+    -- 思考模式处理逻辑
     local is_thinking_enabled = false
     local effort = "high"
     
@@ -94,11 +98,11 @@ local function translator(input, seg, env)
         is_thinking_enabled = true
         if string.find(mode_str, "Low") or string.find(mode_str, "低") then effort = "low"
         elseif string.find(mode_str, "Medium") or string.find(mode_str, "中") then effort = "medium"
-        elseif string.find(mode_str, "Max") then effort = "max" -- [修复 2] 补充匹配 Max 强度，适配 DeepSeek v4
+        elseif string.find(mode_str, "Max") then effort = "max"
         end
     end
 
-if is_thinking_enabled then
+    if is_thinking_enabled then
         if is_anthropic then
             local budget = math.floor(req_max_tokens * 0.8)
             if budget < 1024 then budget = 1024 end
@@ -124,19 +128,28 @@ if is_thinking_enabled then
         end
     end
 
+    -- 🧠 提取历史记忆并重新组装用户请求 (无缝拼接)
+    local history_text = table.concat(commit_history, "")
+    local user_content = safe_text -- 默认情况下只有拼音
+    
+    if #history_text > 0 then
+        local safe_history = escape_json(history_text)
+        user_content = string.format("【历史上下文】：%s\\n【当前需翻译的拼音】：%s", safe_history, safe_text)
+    end
+
     local json_data = ""
     local auth_headers = ""
 
     if is_anthropic then
         json_data = string.format(
             '{"model":"%s","system":"%s","messages":[{"role":"user","content":"%s"}],"temperature":%s,"max_tokens":%s%s}',
-            runtime_model, safe_prompt, safe_text, Config.temperature or 0.1, req_max_tokens, thinking_json
+            runtime_model, safe_prompt, user_content, Config.temperature or 0.1, req_max_tokens, thinking_json
         )
         auth_headers = string.format("-H 'x-api-key: %s' -H 'anthropic-version: 2023-06-01'", api_key)
     else
         json_data = string.format(
             '{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}],"temperature":%s,"max_tokens":%s%s}',
-            runtime_model, safe_prompt, safe_text, Config.temperature or 0.1, req_max_tokens, thinking_json
+            runtime_model, safe_prompt, user_content, Config.temperature or 0.1, req_max_tokens, thinking_json
         )
         auth_headers = string.format("-H 'Authorization: Bearer %s'", api_key)
     end
@@ -154,10 +167,10 @@ if is_thinking_enabled then
     end
     local response = handle:read("*a")
     handle:close()
+    
     -- ==========================================
     -- 🐛 [Debug 模式] 触发式日志记录
     -- ==========================================
-    -- 只有当 Python 创建了这把“钥匙”，Lua 才会消耗 I/O 去写日志
     local debug_trigger = io.open("/tmp/.rime_llm_debug_active", "r")
     if debug_trigger then
         debug_trigger:close()
@@ -171,6 +184,7 @@ if is_thinking_enabled then
             debug_file:close()
         end
     end
+    
     if not response or response == "" then
         yield(Candidate("llm", seg.start, seg._end, send_text, "⏳ 请求超时无响应"))
         return
@@ -200,4 +214,38 @@ if is_thinking_enabled then
     end
 end
 
-return translator
+-- ==========================================
+-- 🧠 [核心功能] 历史上下文监听与清理 (按容量滑动窗口)
+-- ==========================================
+local function init(env)
+    env.commit_notifier = env.engine.context.commit_notifier:connect(function(ctx)
+        local text = ctx:get_commit_text()
+        
+        -- 过滤纯空格/换行
+        if text and text ~= "" and text:match("%S") then
+            table.insert(commit_history, text)
+            current_history_bytes = current_history_bytes + #text
+            
+            -- 【热更新】：每次上屏时，实时读取 config.lua 里最新的限制值
+            local Config = load_config()
+            local max_bytes = (Config and Config.max_history_bytes) or 240
+            
+            -- 当总长度超过动态设定的字节上限时，把老记忆挤掉
+            while current_history_bytes > max_bytes do
+                local removed_text = table.remove(commit_history, 1)
+                if removed_text then
+                    current_history_bytes = current_history_bytes - #removed_text
+                end
+            end
+        end
+    end)
+end
+
+local function fini(env)
+    if env.commit_notifier then
+        env.commit_notifier:disconnect()
+    end
+end
+
+-- 导出拥有生命周期的输入法组件
+return { init = init, func = translator, fini = fini }

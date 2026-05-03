@@ -94,6 +94,7 @@ I18N = {
         "tui_st_temp": "Temperature",
         "tui_st_time": "Reply Timeout",
         "tui_st_thinking": "Thinking Mode",
+        "tui_st_history_bytes": "Max Context Bytes",
         
         # TUI Vocab
         "tui_vc_title": " Custom Vocab ",
@@ -210,7 +211,8 @@ I18N = {
         "tui_st_temp": "发散度 (Temperature)",
         "tui_st_time": "回复超时 (Max Time)",
         "tui_st_thinking": "思考模式 (当前节点特有)",
-        
+        "tui_st_history_bytes": "历史上下文容量 (Bytes)",
+
         # TUI Vocab
         "tui_vc_title": " 自定义词库 ",
         "tui_vc_opt_term": "常用英文词 (防错分)",
@@ -301,7 +303,8 @@ def get_default_state():
         "settings": {
             "prompt": "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见输入内容。你的职责是把用户的拼音转化为流畅、通顺、合理的句子。你要识别出拼音中的错输、漏输、乱序等问题，通过切分用户的拼音推理出正确的句子。\n转换拼音时注意以下几点：\n1. 准确还原语境中的英文词汇。\n2. 高度重视纯首字母简拼（如mrfz=明日方舟）。\n3. 重视前后鼻音区分，用户可能发给你错误的前后鼻音，你要通过前后的拼音上下文做出正确的判断。\n4. 如果用户在拼音中输入了数字的读音（如 yibai, san, erlingerliu，shalujiantaer），请在最终的输出中，结合语境自动将其转换为阿拉伯数字（如 100, 3, 2026，杀戮尖塔2）。\n5. 自动根据语境补充恰当的标点符号，遇到游戏、书籍、影视等作品名时请自动加上《》号。\n【特殊命令】：如果拼音由`call:`、`sys:`或`systemcall:`开头，说明是对你下的指令。请立即切换为“无感情的文本执行器”，直接生成并输出冒号后指令所要求的结果。\n【严格遵守】：\n1. 你的输出将直接被作为用户的打字内容上屏！绝对不允许输出任何前置客套话（如“好的，这是…”）或后置询问（如“需要我帮忙吗？”）。\n2. 保持精简！绝对不要使用大量的空行，禁止使用Markdown加粗符号（**）和标题符号（#）。",
             "ai_trigger": "v", "max_tokens": 4000, "temperature": 0.3,
-            "connect_timeout": 2.0, "max_time": 30.0
+            "connect_timeout": 2.0, "max_time": 30.0,
+            "max_history_bytes": 240
         },
         "vocab": {"terms":["vibecoding", "rime", "bootloader", "wm", "de"], "mappings": {"yyds": "永远的神", "mrfz": "明日方舟", "srwc": "是人我吃", "yihuan": "异环"}}
     }
@@ -362,6 +365,7 @@ return {{
     temperature = {settings.get('temperature', 0.1)},
     connect_timeout = {settings.get('connect_timeout', 2.0)}, 
     max_time = {settings.get('max_time', 30.0)},
+    max_history_bytes = {settings.get('max_history_bytes', 240)},
     vocab_text = [[{vocab_str}    ]]
 }}
 """
@@ -539,9 +543,19 @@ def cli_handler():
             print(f"{t('cli_stat_model')} {p.get('model', 'None')}")
             print(f"{t('cli_stat_state')} {STATE_FILE}")
             print(f"{t('cli_stat_lua')} {LUA_FILE}")
-            prompt = state.get("settings", {}).get("prompt", "None")
-            print(f"\n{C_CYN}{C_BLD}当前系统提示词 (Prompt):{C_RES}")
-            print(f"{C_GRY}{prompt}{C_RES}")
+            
+            # --- 新增：打印所有全局参数 ---
+            s = state.get("settings", {})
+            print(f"\n{C_CYN}{C_BLD}[ {t('tui_opt_settings')} ]{C_RES}")
+            print(f"  {pad_str(t('tui_st_trigger'), 25)}: {s.get('ai_trigger', 'v')}")
+            print(f"  {pad_str(t('tui_st_tokens'), 25)}: {s.get('max_tokens', 4000)}")
+            print(f"  {pad_str(t('tui_st_temp'), 25)}: {s.get('temperature', 0.1)}")
+            print(f"  {pad_str(t('tui_st_time'), 25)}: {s.get('max_time', 30.0)}")
+            print(f"  {pad_str(t('tui_st_history_bytes'), 25)}: {s.get('max_history_bytes', 240)}")
+            
+            prompt = s.get("prompt", "None")
+            print(f"\n{C_CYN}{C_BLD}[ {t('tui_st_prompt')} ]{C_RES}")
+            print(f"{C_GRY}{prompt}{C_RES}\n")
             return True
         elif cmd == "tui": return False
         else:
@@ -1264,7 +1278,8 @@ def run_app(stdscr):
                 {"label": t('tui_st_trigger'), "value": s.get("ai_trigger", "v")},
                 {"label": t('tui_st_tokens'), "value": str(s.get("max_tokens", 4000))},
                 {"label": t('tui_st_temp'), "value": str(s.get("temperature", 0.1))},
-                {"label": t('tui_st_time'), "value": str(s.get("max_time", 30.0))}
+                {"label": t('tui_st_time'), "value": str(s.get("max_time", 30.0))},
+                {"label": t('tui_st_history_bytes'), "value": str(s.get("max_history_bytes", 240))}
             ]
 
             res = form_dialog(stdscr, t('tui_st_title'), fields_config)
@@ -1273,6 +1288,7 @@ def run_app(stdscr):
                 s["max_tokens"] = int(res[2]) if res[2].isdigit() else 4000
                 s["temperature"] = float(res[3]) if res[3].replace('.','',1).isdigit() else 0.1
                 s["max_time"] = float(res[4]) if res[4].replace('.','',1).isdigit() else 30.0
+                s["max_history_bytes"] = int(res[5]) if res[5].isdigit() else 240
                 save_state(state)
 
         elif choice == "edit_vocab":

@@ -74,6 +74,9 @@
 
 `rime-llm-config`是编辑配置的TUI工具。
 
+> 如果你要手动编辑配置文件请编辑`~/.confgi/rime-llm-translator/state.json`后用`rime-llm-config sync`命令同步至`config.lua`
+
+
 ![](pictures/TUI/mainmenu.png)
 
 - 激活配置
@@ -94,11 +97,11 @@
 
   配置可用之后右侧会出现`可用模型`列表，回车确定此配置使用的模型。
 
-- 提示词和参数
+- 全局参数配置
 
-  ![](pictures/TUI/prompt.png)
+  ![](pictures/TUI/prompt2.png)
 
-  这里可以对系统提示词和模型参数进行配置。
+  这里可以对系统提示词和模型参数进行配置。`历史上下文容量`指的是记录多少之前输入过的内容，用于提高ai的联想质量。
 
 - 自定义词库
 
@@ -107,3 +110,5 @@
   这里可以自定义词库。`常用英文词`是为了避免ai把句子中的英文视为拼音进行分词；`拼音缩写映射`可以提高首字母缩写、简拼的联想质量。
 
   ![](pictures/TUI/vocab3.png)
+
+- 
