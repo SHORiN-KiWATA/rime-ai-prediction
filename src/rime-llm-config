@@ -524,7 +524,7 @@ def cli_handler():
         cmd = sys.argv[1].lower()
         if cmd in ("-h", "--help", "help"): print_help(); return True
         elif cmd == "init": init_rime_config(); return True
-	elif cmd == "debug":   
+        elif cmd == "debug":   
             run_debug()       
             return True      
         elif cmd == "sync":
