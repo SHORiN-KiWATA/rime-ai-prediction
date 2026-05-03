@@ -26,7 +26,9 @@
 
 ![](pictures/call.gif)
 
-缺点是有一点延迟，尤其在使用推理模型的时候，等待大模型出结果需要一些时间。使用快速响应的模型或者本地部署小模型可以解决延迟问题，但是效果就一般了。我暂时没想到什么好的解决办法。>也许可以使用特调小模型。
+缺点是有一点延迟，尤其在使用推理模型的时候，等待大模型出结果需要一些时间。使用快速响应的模型或者本地部署小模型可以解决延迟问题，但是效果就一般了。我暂时没想到什么好的解决办法。
+
+>也许可以使用特调小模型。
 
 ## 使用方法
 
@@ -60,10 +62,23 @@
     
     - 新建`rime.lua`导入`llm_translator`；
     
+      ```
+      llm_translator = require("llm_translator")
+      ```
       > 如果已经存在的话会备份后在文件末尾追加
     
-    - 如果检测到安装了雾凇拼音的话会新建`rime_ice.custom.yaml`写入patch，启用llm_translator；
-    
+    - 如果检测到安装了雾凇拼音的话会新建`rime_ice.custom.yaml`写入patch，启用llm_translator并配置一些上屏规则；
+
+      ```
+      patch:
+        # 1. 扩充允许输入的字符集：允许在拼音中直接输入指定的标点符号，阻止其直接上屏
+        "speller/alphabet": "zyxwvutsrqponmlkjihgfedcba.,?'!:<>"
+        # 2. 将 Lua AI 脚本 (llm_translator) 强行插入到处理列表的第 0 位之前
+        "engine/translators/@before 0": lua_translator@llm_translator
+        # 3. 定义正则捕获规则：把输入当成不可分割的整体喂给 AI 脚本处理
+        "recognizer/patterns/llm_pinyin": "^[a-z][a-z.,?'!:]*$"
+      ```
+
     - 如果fcitx5正在运行的话，重启以重新部署。
     
 4. 配置大模型
@@ -110,5 +125,3 @@
   这里可以自定义词库。`常用英文词`是为了避免ai把句子中的英文视为拼音进行分词；`拼音缩写映射`可以提高首字母缩写、简拼的联想质量。
 
   ![](pictures/TUI/vocab3.png)
-
-- 
