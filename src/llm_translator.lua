@@ -79,6 +79,7 @@ local function translator(input, seg, env)
     local is_anthropic = string.find(url_lower, "anthropic") or string.find(url_lower, "messages$")
     local is_deepseek = (string.find(url_lower, "deepseek") or string.find(model_lower, "deepseek")) and not string.find(model_lower, "chat")
     local is_gemini = string.find(url_lower, "generativelanguage") or string.find(model_lower, "gemini")
+    local is_mimo = (string.find(url_lower, "xiaomimimo") or string.find(model_lower, "mimo")) and not string.find(model_lower, "tts")
     
     local runtime_model = current_ai.model
     local thinking_json = ""
@@ -97,9 +98,8 @@ local function translator(input, seg, env)
         end
     end
 
-    if is_thinking_enabled then
+if is_thinking_enabled then
         if is_anthropic then
-            -- Anthropic 强制要求 budget_tokens < max_tokens
             local budget = math.floor(req_max_tokens * 0.8)
             if budget < 1024 then budget = 1024 end
             if req_max_tokens <= budget then req_max_tokens = budget + 100 end
@@ -107,13 +107,17 @@ local function translator(input, seg, env)
         elseif is_deepseek then
             runtime_model = string.gsub(runtime_model, "deepseek%-chat", "deepseek-reasoner")
             thinking_json = string.format(',"thinking":{"type":"enabled"},"reasoning_effort":"%s"', effort)
+        elseif is_mimo then
+            thinking_json = ',"thinking":{"type":"enabled"}'
         else
-            -- Gemini 等 OpenAI Proxy 模型 (自动映射 thinkingLevel)
+            -- Gemini 等使用 reasoning_effort
             thinking_json = string.format(',"reasoning_effort":"%s"', effort)
         end
     else
         if is_deepseek then
             runtime_model = string.gsub(runtime_model, "deepseek%-reasoner", "deepseek-chat")
+            thinking_json = ',"thinking":{"type":"disabled"}'
+        elseif is_mimo then
             thinking_json = ',"thinking":{"type":"disabled"}'
         elseif is_gemini then
             thinking_json = ',"reasoning_effort":"low"'

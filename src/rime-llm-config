@@ -1019,15 +1019,18 @@ class ProviderEditorTUI:
             if self.active_col == 0 and self.providers[0]["id"] != "empty":
                 p = self.providers[self.prov_idx]
                 
-		# --- 动态思考配置挂载 ---
+                # --- 动态思考配置挂载 ---
                 url_lower = p["api_url"].lower()
                 model_lower = p["model"].lower()
-                is_openrouter = "openrouter" in url_lower
+                
                 is_deepseek = ("deepseek" in url_lower or "deepseek" in model_lower) and "chat" not in model_lower
                 is_gemini = "generativelanguage" in url_lower or "gemini" in model_lower
                 is_anthropic = "anthropic" in url_lower or "claude" in model_lower
+                # 新增 MiMo 判定，并排除 tts 语音等不支持思考的模型
+                is_mimo = ("xiaomimimo" in url_lower or "mimo" in model_lower) and "tts" not in model_lower
                 
-                supports_thinking = is_deepseek or is_gemini or is_anthropic
+                # 将 MiMo 加入支持思考的白名单
+                supports_thinking = is_deepseek or is_gemini or is_anthropic or is_mimo
                 
                 fields_config = [
                     {"label":t('tui_sm_lbl_id'),"value":p["id"]}, 
@@ -1037,23 +1040,18 @@ class ProviderEditorTUI:
                 ]
                 
                 if supports_thinking:
-                    # 根据不同厂商动态生成精准的专属菜单
                     if is_gemini:
-                        # Gemini: 保留 Minimal 到 High 的梯度
                         think_opts = ["关闭 / 极低 (Disabled / Minimal)", "开启 - 低 (Low)", "开启 - 中 (Medium)", "开启 - 高 (High)"] if LANG == "zh" else ["Disabled / Minimal", "Enabled (Low)", "Enabled (Medium)", "Enabled (High)"]
                     elif is_deepseek:
-                        # DeepSeek v4: 官方忽略低/中档位，直接提供高和极高
                         think_opts = ["关闭 (Disabled)", "开启 - 高 (High)", "开启 - 极高 (Max)"] if LANG == "zh" else ["Disabled", "Enabled (High)", "Enabled (Max)"]
-                    elif is_anthropic:
-                        # Anthropic: 仅通过 budget_tokens 区分开启或关闭
+                    elif is_anthropic or is_mimo:
+                        # MiMo 和 Anthropic 一样，只提供纯粹的开/关两档
                         think_opts = ["关闭 (Disabled)", "开启 (Enabled)"] if LANG == "zh" else ["Disabled", "Enabled"]
                     else:
-                        # 兜底选项
                         think_opts = ["关闭 (Disabled)", "开启 - 低 (Low)", "开启 - 中 (Medium)", "开启 - 高 (High)"] if LANG == "zh" else ["Disabled", "Enabled (Low)", "Enabled (Medium)", "Enabled (High)"]
                     
                     curr_think = p.get("thinking_mode", "")
                     
-                    # 如果原先保存的值不在新的专属列表里，则自动重置为第一个（关闭）
                     if not curr_think or curr_think not in think_opts:
                         curr_think = think_opts[0]
                         
