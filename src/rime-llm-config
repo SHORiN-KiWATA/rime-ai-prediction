@@ -41,6 +41,7 @@ I18N = {
         "cli_help_init": "  init             : Initialize Rime and restart Fcitx5.",
         "cli_help_sync": "  sync             : Sync configurations to Lua.",
         "cli_help_stat": "  status           : Show current configuration info.",
+        "cli_help_debug": "  debug            : Start real-time debug monitor.",
         "cli_help_h": "  -h / --help      : Show this help message.",
         "cli_bk_create": "Backup created at: {}",
         "cli_fcitx_not_run": "Fcitx5 is not currently running. Deployment skipped.",
@@ -156,6 +157,7 @@ I18N = {
         "cli_help_init": "  init             : 初始化",
         "cli_help_sync": "  sync             : 同步配置",
         "cli_help_stat": "  status           : 显示当前配置信息",
+	"cli_help_debug": "  debug            : 启动实时调试监控，并开启日志记录",
         "cli_help_h": "  -h / --help      : 显示此帮助信息",
         "cli_bk_create": "已创建配置文件备份: {}",
         "cli_fcitx_not_run": "检测到 Fcitx5 未运行，跳过自动部署。",
@@ -482,12 +484,39 @@ def init_rime_config():
     restart_fcitx5()
     print_tutorial()
 
+def run_debug():
+    trigger_file = "/tmp/.rime_llm_debug_active"
+    log_file = "/tmp/rime_llm_debug.log"
+
+    print(f"\n{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"{C_GRN}{C_BLD}  🐛 RIME LLM Debug Monitor Active{C_RES}")
+    print(f"{C_CYN}{C_BLD}======================================================================={C_RES}")
+    print(f"  {C_YLW}已激活日志记录。正在监听输入法请求... (按 Ctrl+C 退出并关闭日志){C_RES}\n")
+
+    try:
+        # 1. 放置触发器，激活 Lua 日志
+        with open(trigger_file, "w") as f: f.write("1")
+        # 2. 确保日志文件存在，防止 tail 报错
+        if not os.path.exists(log_file):
+            with open(log_file, "w") as f: f.write("")
+
+        # 3. 启动 tail -f 实时阻塞打印
+        subprocess.run(["tail", "-f", log_file])
+    except KeyboardInterrupt:
+        print(f"\n\n{L_INFO} 正在退出调试模式...")
+    finally:
+        # 4. 无论如何退出，必须销毁触发器，让 Lua 重新静默
+        if os.path.exists(trigger_file):
+            os.remove(trigger_file)
+        print(f"{L_OK} 调试监控已关闭，输入法恢复静默模式。")
+
 def print_help():
     print(t("cli_help_title"))
     print(t("cli_help_tui"))
     print(t("cli_help_init"))
     print(t("cli_help_sync"))
     print(t("cli_help_stat"))
+    print(t("cli_help_debug"))
     print(t("cli_help_h") + "\n")
 
 def cli_handler():
@@ -495,6 +524,9 @@ def cli_handler():
         cmd = sys.argv[1].lower()
         if cmd in ("-h", "--help", "help"): print_help(); return True
         elif cmd == "init": init_rime_config(); return True
+	elif cmd == "debug":   
+            run_debug()       
+            return True      
         elif cmd == "sync":
             state = load_state(); out = export_to_lua(state)
             print(f"{L_OK} " + t("cli_sync_ok", out))

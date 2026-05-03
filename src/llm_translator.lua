@@ -154,7 +154,23 @@ if is_thinking_enabled then
     end
     local response = handle:read("*a")
     handle:close()
-
+    -- ==========================================
+    -- 🐛 [Debug 模式] 触发式日志记录
+    -- ==========================================
+    -- 只有当 Python 创建了这把“钥匙”，Lua 才会消耗 I/O 去写日志
+    local debug_trigger = io.open("/tmp/.rime_llm_debug_active", "r")
+    if debug_trigger then
+        debug_trigger:close()
+        local debug_file = io.open("/tmp/rime_llm_debug.log", "a")
+        if debug_file then
+            debug_file:write("========== " .. os.date("%Y-%m-%d %H:%M:%S") .. " ==========\n")
+            debug_file:write("【节点模型】 " .. (current_ai.name or "Unknown") .. " (" .. runtime_model .. ")\n")
+            debug_file:write("【发出的 JSON】\n" .. json_data .. "\n\n")
+            debug_file:write("【收到的 Raw 返回】\n" .. (response or "nil") .. "\n")
+            debug_file:write("==================================================\n\n")
+            debug_file:close()
+        end
+    end
     if not response or response == "" then
         yield(Candidate("llm", seg.start, seg._end, send_text, "⏳ 请求超时无响应"))
         return
