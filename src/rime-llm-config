@@ -539,6 +539,9 @@ def cli_handler():
             print(f"{t('cli_stat_model')} {p.get('model', 'None')}")
             print(f"{t('cli_stat_state')} {STATE_FILE}")
             print(f"{t('cli_stat_lua')} {LUA_FILE}")
+            prompt = state.get("settings", {}).get("prompt", "None")
+            print(f"\n{C_CYN}{C_BLD}当前系统提示词 (Prompt):{C_RES}")
+            print(f"{C_GRY}{prompt}{C_RES}")
             return True
         elif cmd == "tui": return False
         else:
