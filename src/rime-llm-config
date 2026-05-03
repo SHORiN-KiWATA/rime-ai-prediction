@@ -297,8 +297,8 @@ def get_default_state():
             }
         },
         "settings": {
-            "prompt": "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见领域。你的职责是把用户的纯拼音或包含白名单符号的拼音串转化为流畅、通顺、合理的句子。你要识别出拼音中的错输、漏输、乱序等问题，推理出正确的中文。\n\n请严格遵循以下规则：\n1. 中英混排：准确还原语境中的英文词汇。\n2. 简拼推断：高度重视纯首字母简拼（如 mrfz = 明日方舟）。\n3. 纠错容错：重视前后鼻音混淆（in/ing, en/eng），结合上下文做出正确判断。\n4. 数字与专有名词：如果用户输入了数字的拼音读音（如 yibai, san, erlingerliu, shalujiantaer），请结合语境自动转换为阿拉伯数字或带有正确标点符号的专有名词（如 100, 3, 2026, 《杀戮尖塔2》）。\n\n【严格遵守】：绝对不要输出任何解释、思考过程、拼音或双引号！只输出最终的翻译结果。\n【特殊指令】：如果用户发来的拼音以纯英文 sys: 或 cmd: 开头（例如 cmd:用文言文写一首关于春天的诗），说明冒号后面的内容不是需要翻译的拼音，而是对你下达的直接指令，请直接执行该指令并返回结果。",
-            "ai_trigger": "v", "max_tokens": 4000, "temperature": 0.1,
+            "prompt": "你是一个智能拼音输入法引擎，熟知中华文化、二次元文化、网络文化等常见输入内容。你的职责是把用户的拼音转化为流畅、通顺、合理的句子。你要识别出拼音中的错输、漏输、乱序等问题，通过切分用户的拼音推理出正确的句子。\n注意几点：\n1. 准确还原语境中的英文词汇。\n2. 高度重视【纯首字母简拼】（如mrfz=明日方舟）。\n3. 重视前后鼻音区分，用户可能发给你错误的前后鼻音，你要通过前后的拼音上下文做出正确的判断。\n4. 如果用户在拼音中输入了数字的读音（如 yibai, san, erlingerliu，shalujiantaer），请在最终的输出中，结合语境自动将其转换为阿拉伯数字（如 100, 3, 2026，杀戮尖塔2）。\n【严格遵守】：绝对不要输出解释、思考内容、拼音或双引号！\n【特殊情况】：如果用户发来由：“这是命令”、“systemcall:”、“call:”开头的拼音，说明冒号后面的内容不是拼音而是对你下的指令。",
+            "ai_trigger": "v", "max_tokens": 4000, "temperature": 0.3,
             "connect_timeout": 2.0, "max_time": 30.0
         },
         "vocab": {"terms":["vibecoding", "rime", "bootloader", "wm", "de"], "mappings": {"yyds": "永远的神", "mrfz": "明日方舟", "srwc": "是人我吃", "yihuan": "异环"}}
@@ -456,7 +456,7 @@ def init_rime_config():
         custom_yaml = os.path.join(rime_dir, "rime_ice.custom.yaml")
         patch_content = """
   # 1. 扩充允许输入的字符集：允许在拼音中直接输入指定的标点符号，阻止其直接上屏
-  "speller/alphabet": "zyxwvutsrqponmlkjihgfedcba.,?'!:"
+  "speller/alphabet": "zyxwvutsrqponmlkjihgfedcba.,?'!:<>"
   # 2. 将 Lua AI 脚本 (llm_translator) 强行插入到处理列表的第 0 位之前
   "engine/translators/@before 0": lua_translator@llm_translator
   # 3. 定义正则捕获规则：把输入当成不可分割的整体喂给 AI 脚本处理
